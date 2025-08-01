@@ -43,7 +43,7 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {"Sales Invoice" : "public/js/sales_invoice.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -129,9 +129,9 @@ app_license = "mit"
 # ---------------
 # Override standard doctype classes
 
-# override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
-# }
+override_doctype_class = {
+	"Company": "jofotara_integration.overrides.company.CompanyOverride"
+}
 
 # Document Events
 # ---------------
@@ -235,6 +235,57 @@ app_license = "mit"
 # 	"jofotara_integration.auth.validate"
 # ]
 
+# Custom Fields
+# -------------
+# Custom fields for ERPNext doctypes
+
+custom_fields = {
+	"Sales Invoice": [
+		{
+			"fieldname": "e_invoice_status",
+			"label": "E-Invoice Status",
+			"fieldtype": "Select",
+			"options": "Pending\nSubmitted\nAccepted\nRejected",
+			"default": "Pending",
+			"read_only": 1,
+			"insert_after": "status",
+			"allow_on_submit": 1,
+			"in_list_view": 1,
+			"in_standard_filter": 1
+		},
+		{
+			"fieldname": "e_invoice_uuid",
+			"label": "E-Invoice UUID",
+			"fieldtype": "Data",
+			"read_only": 1,
+			"insert_after": "e_invoice_status",
+			"allow_on_submit": 1,
+			"in_list_view": 0
+		},
+		{
+			"fieldname": "e_invoice_qr_code",
+			"label": "E-Invoice QR Code",
+			"fieldtype": "Long Text",
+			"read_only": 1,
+			"insert_after": "e_invoice_uuid",
+			"allow_on_submit": 1,
+			"in_list_view": 0
+		},
+		{
+			"fieldname": "icv_counter",
+			"label": "ICV Counter",
+			"fieldtype": "Int",
+			"read_only": 1,
+			"insert_after": "e_invoice_qr_code",
+			"allow_on_submit": 1,
+			"in_list_view": 0
+		}
+	]
+}
+
+after_migrate = [
+    "jofotara_integration.custom.company.add_custom_fields"
+]
 # Automatically update python controller files with type annotations for this app.
 # export_python_type_annotations = True
 
