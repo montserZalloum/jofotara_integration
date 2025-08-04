@@ -83,7 +83,11 @@ doctype_js = {"Sales Invoice" : "public/js/sales_invoice.js"}
 # ------------
 
 # before_install = "jofotara_integration.install.before_install"
-# after_install = "jofotara_integration.install.after_install"
+after_install = "jofotara_integration.install.after_install"
+
+# Fixtures
+# --------
+fixtures = ["Print Format"]
 
 # Uninstallation
 # ------------
@@ -242,7 +246,7 @@ override_doctype_class = {
 custom_fields = {
 	"Sales Invoice": [
 		{
-			"fieldname": "e_invoice_status",
+			"fieldname": "custom_einvoice_status",
 			"label": "E-Invoice Status",
 			"fieldtype": "Select",
 			"options": "Pending\nSubmitted\nAccepted\nRejected",
@@ -254,16 +258,16 @@ custom_fields = {
 			"in_standard_filter": 1
 		},
 		{
-			"fieldname": "e_invoice_uuid",
+			"fieldname": "custom_einvoice_uuid",
 			"label": "E-Invoice UUID",
 			"fieldtype": "Data",
 			"read_only": 1,
-			"insert_after": "e_invoice_status",
+			"insert_after": "custom_einvoice_status",
 			"allow_on_submit": 1,
 			"in_list_view": 0
 		},
 		{
-			"fieldname": "e_invoice_qr_code",
+			"fieldname": "custom_einvoice_qr_code",
 			"label": "E-Invoice QR Code",
 			"fieldtype": "Long Text",
 			"read_only": 1,
@@ -276,7 +280,7 @@ custom_fields = {
 			"label": "ICV Counter",
 			"fieldtype": "Int",
 			"read_only": 1,
-			"insert_after": "e_invoice_qr_code",
+			"insert_after": "custom_einvoice_qr_code",
 			"allow_on_submit": 1,
 			"in_list_view": 0
 		}
@@ -284,7 +288,8 @@ custom_fields = {
 }
 
 after_migrate = [
-    "jofotara_integration.custom.company.add_custom_fields"
+    "jofotara_integration.custom.company.add_custom_fields",
+    "jofotara_integration.install.after_migrate"
 ]
 # Automatically update python controller files with type annotations for this app.
 # export_python_type_annotations = True

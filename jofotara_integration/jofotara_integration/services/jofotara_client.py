@@ -195,7 +195,7 @@ class JoFotaraClient:
                 'status_code': status_code,
                 'response_time_ms': response_time_ms,
                 'uuid': response_data.get('uuid'),
-                'qr_code': response_data.get('qr_code'),
+                'qr_code': response_data.get('EINV_QR'),  # Updated to match JoFotara API response field
                 'status': response_data.get('status'),
                 'submission_time': response_data.get('submission_time'),
                 'raw_response': response_data

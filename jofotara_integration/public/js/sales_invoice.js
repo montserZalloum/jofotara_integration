@@ -13,6 +13,17 @@ frappe.ui.form.on('Sales Invoice', {
 			setup_realtime_listeners(frm);
 			frm.jofotara_listeners_setup = true;
 		}
+		
+		// Add QR code preview functionality
+		add_qr_code_preview(frm);
+		
+		// Add enhanced print preview button
+		add_enhanced_print_preview_button(frm);
+	},
+	
+	custom_einvoice_qr_code: function(frm) {
+		// Real-time QR code display when field is updated
+		add_qr_code_preview(frm);
 	}
 });
 
@@ -98,7 +109,7 @@ function validate_submission_requirements(frm) {
 	}
 	
 	// Check if already accepted
-	const einvoice_status = frm.doc.custom_einvoice_status || frm.doc.e_invoice_status;
+	const einvoice_status = frm.doc.custom_einvoice_status;
 	if (einvoice_status === 'Accepted') {
 		frappe.msgprint({
 			title: __('Already Submitted'),
@@ -222,7 +233,7 @@ function setup_realtime_listeners(frm) {
 frappe.ui.form.on('Sales Invoice', {
 	custom_einvoice_status: function(frm) {
 		// Update status indicator color based on e-invoice status
-		const status = frm.doc.custom_einvoice_status || frm.doc.e_invoice_status;
+		const status = frm.doc.custom_einvoice_status;
 		update_status_indicator(frm, status);
 	}
 });
@@ -238,9 +249,198 @@ function update_status_indicator(frm, status) {
 	
 	if (status && status_colors[status]) {
 		// Update the field's appearance if possible
-		const field = frm.get_field('custom_einvoice_status') || frm.get_field('e_invoice_status');
+		const field = frm.get_field('custom_einvoice_status');
 		if (field && field.$wrapper) {
 			field.$wrapper.find('.control-value').css('color', status_colors[status]);
 		}
+	}
+}
+
+// QR Code Preview Functionality
+function add_qr_code_preview(frm) {
+	const qr_code_data = frm.doc.custom_einvoice_qr_code;
+	const status = frm.doc.custom_einvoice_status;
+	
+	// Remove existing QR code preview
+	remove_qr_code_preview(frm);
+	
+	if (qr_code_data && validate_qr_code_data(qr_code_data)) {
+		create_qr_code_preview_section(frm, qr_code_data, status);
+	}
+}
+
+function validate_qr_code_data(qr_data) {
+	if (!qr_data || qr_data.trim() === '') {
+		return false;
+	}
+	
+	// Basic validation for base64 format
+	try {
+		const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
+		return base64Pattern.test(qr_data);
+	} catch (error) {
+		console.error('Error validating QR code data:', error);
+		return false;
+	}
+}
+
+function create_qr_code_preview_section(frm, qr_data, status) {
+	// Find a good place to insert the QR code preview
+	const target_field = frm.get_field('custom_einvoice_qr_code') || frm.get_field('custom_einvoice_status');
+	if (!target_field || !target_field.$wrapper) {
+		return;
+	}
+	
+	// Create QR code preview HTML
+	const qr_preview_html = `
+		<div id="qr-code-preview-section" style="margin-top: 15px; padding: 15px; background-color: #f9f9f9; border-radius: 5px; border-left: 4px solid #4CAF50;">
+			<h5 style="margin-bottom: 10px; color: #333;">
+				<i class="fa fa-qrcode"></i> E-Invoice QR Code Preview
+			</h5>
+			<div style="display: flex; align-items: flex-start; gap: 15px;">
+				<div style="text-align: center;">
+					<img id="qr-preview-image" 
+						 src="data:image/png;base64,${qr_data}" 
+						 alt="E-Invoice QR Code" 
+						 style="max-width: 120px; max-height: 120px; border: 1px solid #ddd; border-radius: 3px;">
+					<p style="font-size: 11px; margin-top: 5px; color: #666;">Scan for Verification</p>
+				</div>
+				<div style="flex: 1;">
+					<p><strong>Status:</strong> 
+						<span style="color: ${getStatusColor(status)}; font-weight: bold;">${status || 'Not Submitted'}</span>
+					</p>
+					${status === 'Accepted' ? '<p style="color: green; font-weight: bold;"><i class="fa fa-check-circle"></i> Tax Authority Approved</p>' : ''}
+					<p style="font-size: 12px; color: #666;">
+						This QR code will appear on printed invoices and allows customers to verify the invoice authenticity with tax authorities.
+					</p>
+					<button class="btn btn-sm btn-default" onclick="preview_qr_print_format('${frm.doc.name}')">
+						<i class="fa fa-print"></i> Preview Print with QR
+					</button>
+				</div>
+			</div>
+		</div>
+	`;
+	
+	// Insert after the target field
+	target_field.$wrapper.after(qr_preview_html);
+	
+	// Setup error handling for QR image
+	const qr_image = document.getElementById('qr-preview-image');
+	if (qr_image) {
+		qr_image.onerror = function() {
+			this.style.display = 'none';
+			this.parentElement.innerHTML = '<p style="color: red; font-size: 12px;">QR Code could not be displayed</p>';
+		};
+	}
+}
+
+function remove_qr_code_preview(frm) {
+	const existing_preview = document.getElementById('qr-code-preview-section');
+	if (existing_preview) {
+		existing_preview.remove();
+	}
+}
+
+function getStatusColor(status) {
+	const colors = {
+		'Pending': '#666',
+		'Submitted': '#0066cc',
+		'Accepted': '#4CAF50',
+		'Rejected': '#f44336'
+	};
+	return colors[status] || '#666';
+}
+
+// Enhanced Print Preview Functionality
+function add_enhanced_print_preview_button(frm) {
+	// Only add for submitted invoices or those with QR codes
+	if (frm.doc.docstatus === 1 || frm.doc.custom_einvoice_qr_code) {
+		frm.add_custom_button(__('Print with QR Code'), function() {
+			open_qr_print_preview(frm);
+		}, __('Print'));
+	}
+}
+
+function preview_qr_print_format(invoice_name) {
+	// Function called from QR preview section button
+	const url = `/printview?doctype=Sales Invoice&name=${invoice_name}&format=Invoice with QR Code&no_letterhead=0&letterhead=No Letterhead&settings={}&_lang=en`;
+	window.open(url, '_blank');
+}
+
+function open_qr_print_preview(frm) {
+	// Enhanced print preview with QR code format
+	const print_formats = ['Invoice with QR Code', 'Standard'];
+	
+	// Create dialog for print format selection
+	const d = new frappe.ui.Dialog({
+		title: __('Print Preview Options'),
+		fields: [
+			{
+				fieldtype: 'Select',
+				fieldname: 'print_format',
+				label: __('Print Format'),
+				options: print_formats.join('\n'),
+				default: 'Invoice with QR Code',
+				description: __('Select print format for preview')
+			},
+			{
+				fieldtype: 'Check',
+				fieldname: 'include_qr',
+				label: __('Include QR Code'),
+				default: 1,
+				description: __('Include QR code in print format (if available)')
+			}
+		],
+		primary_action_label: __('Preview'),
+		primary_action: function(values) {
+			const format = values.print_format;
+			const url = `/printview?doctype=Sales Invoice&name=${frm.doc.name}&format=${encodeURIComponent(format)}&no_letterhead=0&letterhead=No Letterhead&settings={}&_lang=en`;
+			window.open(url, '_blank');
+			d.hide();
+		}
+	});
+	
+	d.show();
+}
+
+// PDF Generation with QR Code
+function generate_pdf_with_qr(frm) {
+	frappe.call({
+		method: 'frappe.utils.print_format.download_pdf',
+		args: {
+			doctype: 'Sales Invoice',
+			name: frm.doc.name,
+			format: 'Invoice with QR Code',
+			no_letterhead: 0
+		},
+		callback: function(response) {
+			if (response.message) {
+				// Handle PDF download
+				const link = document.createElement('a');
+				link.href = response.message.pdf_data;
+				link.download = `${frm.doc.name}_with_qr.pdf`;
+				link.click();
+			}
+		}
+	});
+}
+
+// Real-time QR code validation
+function validate_qr_code_in_realtime(frm) {
+	const qr_field = frm.get_field('custom_einvoice_qr_code');
+	if (qr_field) {
+		qr_field.$input.on('input', function() {
+			const qr_data = $(this).val();
+			if (qr_data) {
+				setTimeout(() => {
+					if (!validate_qr_code_data(qr_data)) {
+						frappe.show_alert({
+							message: __('Invalid QR code format detected'),
+							indicator: 'orange'
+						});
+					}
+				}, 500);
+			}
+		});
 	}
 } 

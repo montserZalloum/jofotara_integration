@@ -126,7 +126,7 @@ def process_invoice_submission(sales_invoice, company):
 			
 			# Store QR code if present in response
 			if response.get('qr_code'):
-				update_data['custom_einvoice_qr_code_text'] = response.get('qr_code')
+				update_data['custom_einvoice_qr_code'] = response.get('qr_code')
 			
 			frappe.db.set_value('Sales Invoice', sales_invoice, update_data)
 			frappe.db.commit()
