@@ -2,9 +2,9 @@ import frappe
 from frappe import _
 import json
 
-# Temporarily commenting out services for testing
-# from jofotara_integration.services.xml_generator import UBLXMLGenerator
-# from jofotara_integration.services.jofotara_client import JoFotaraClient
+from jofotara_integration.jofotara_integration.services.xml_generator import UBLXMLGenerator
+from jofotara_integration.jofotara_integration.services.jofotara_client import JoFotaraClient
+from jofotara_integration.jofotara_integration.utils.jofotara_logger import log_api_submission
 
 
 def enqueue_invoice_submission(sales_invoice_name, company_name):
@@ -58,8 +58,6 @@ def process_invoice_submission(sales_invoice, company):
 		company (str): Company name
 	"""
 	try:
-		frappe.log_info(f"Starting JoFotara submission for {sales_invoice}")
-		
 		# Validate company authentication credentials
 		company_doc = frappe.get_doc("Company", company)
 		_validate_company_credentials(company_doc)
@@ -67,51 +65,91 @@ def process_invoice_submission(sales_invoice, company):
 		# Get invoice document
 		invoice_doc = frappe.get_doc("Sales Invoice", sales_invoice)
 		
-		# TEMPORARY: Mock the services for testing
-		frappe.log_info("MOCK: Would generate XML and submit to JoFotara")
+		# Initialize services with company config
+		xml_generator = UBLXMLGenerator()
+		client = JoFotaraClient()
 		
-		# Mock response for testing
-		response = {
-			'uuid': f'mock-uuid-{sales_invoice}',
-			'qr_code': f'mock-qr-code-{sales_invoice}'
+		# Generate UBL 2.1 XML (ICV counter will be implemented in Epic 2)
+		# Convert Frappe document to dictionary for XML generator
+		invoice_data = invoice_doc.as_dict()
+		xml_content = xml_generator.generate_xml(invoice_data, icv_counter=1)
+		
+		# Prepare company config dictionary for API client
+		client_id = company_doc.get("jofotara_client_id")
+		# Use get_password() for Password field types to get decrypted value
+		secret_key = company_doc.get_password("jofotara_secret_key")
+		activity_serial = company_doc.get("jofotara_activity_serial")
+		
+		company_config = {
+			'client_id': client_id.strip() if client_id else None,
+			'secret_key': secret_key.strip() if secret_key else None,
+			'activity_serial': activity_serial.strip() if activity_serial else None
 		}
 		
-		# Update invoice status and store response data
-		update_data = {
-			'custom_einvoice_status': 'Accepted',
+		# Prepare invoice data with XML content for API client
+		invoice_with_xml = {
+			'xml_content': xml_content,
+			'invoice_name': invoice_doc.name,
+			'company': invoice_doc.company
 		}
 		
-		# Store UUID if present in response
-		if response.get('uuid'):
-			update_data['custom_einvoice_uuid'] = response.get('uuid')
+		# Prepare request payload for logging
+		request_payload = {
+			'endpoint': client.api_endpoint,
+			'method': 'POST',
+			'headers': {
+				'Client-Id': client_id[:8] + '...' if client_id else None,
+				'Secret-Key': '***HIDDEN***',
+				'Content-Type': 'application/json'
+			},
+			'invoice_name': invoice_doc.name,
+			'company': invoice_doc.company,
+			'xml_length': len(xml_content)
+		}
 		
-		# Store QR code if present in response
-		if response.get('qr_code'):
-			update_data['custom_einvoice_qr_code_text'] = response.get('qr_code')
+		# Submit to JoFotara API
+		response = client.submit_invoice(invoice_with_xml, company_config)
 		
-		frappe.db.set_value('Sales Invoice', sales_invoice, update_data)
-		frappe.db.commit()
+		# Log the API submission
+		log_api_submission(sales_invoice, request_payload, response, response.get('success', False))
 		
-		# Send success notification
-		_send_completion_notification(sales_invoice, 'success', {
-			'status': 'Accepted',
-			'uuid': response.get('uuid'),
-			'message': _("Invoice successfully submitted to JoFotara")
-		})
-		
-		frappe.log_info(f"JoFotara submission completed successfully for {sales_invoice}")
+		# Check if API call was successful
+		if response.get('success'):
+			# Update invoice status and store response data for successful submission
+			update_data = {
+				'custom_einvoice_status': 'Accepted',
+			}
+			
+			# Store UUID if present in response
+			if response.get('uuid'):
+				update_data['custom_einvoice_uuid'] = response.get('uuid')
+			
+			# Store QR code if present in response
+			if response.get('qr_code'):
+				update_data['custom_einvoice_qr_code_text'] = response.get('qr_code')
+			
+			frappe.db.set_value('Sales Invoice', sales_invoice, update_data)
+			frappe.db.commit()
+			
+			# Send success notification
+			_send_completion_notification(sales_invoice, 'success', {
+				'status': 'Accepted',
+				'uuid': response.get('uuid'),
+				'message': _("Invoice successfully submitted to JoFotara")
+			})
+		else:
+			# API call failed, raise exception to trigger error handling
+			error_msg = response.get('error', 'Unknown API error')
+			status_code = response.get('status_code', 'Unknown')
+			raise Exception(f"JoFotara API Error {status_code}: {error_msg}")
 		
 	except Exception as e:
 		error_message = str(e)
-		frappe.log_error(f"JoFotara submission failed for {sales_invoice}: {error_message}")
 		
 		# Handle submission error and update status
 		update_data = {
 			'custom_einvoice_status': 'Rejected'
 		}
-		
-		# Store error details if there's a custom field for it
-		# (This would be added in future iteration if needed)
 		
 		frappe.db.set_value('Sales Invoice', sales_invoice, update_data)
 		frappe.db.commit()

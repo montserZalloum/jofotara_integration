@@ -3,9 +3,8 @@ from frappe import _
 from frappe.utils import get_url
 import json
 
-# Temporarily commenting out services for testing
-# from jofotara_integration.services.xml_generator import UBLXMLGenerator
-# from jofotara_integration.services.jofotara_client import JoFotaraClient
+from jofotara_integration.jofotara_integration.services.xml_generator import UBLXMLGenerator
+from jofotara_integration.jofotara_integration.services.jofotara_client import JoFotaraClient
 
 
 @frappe.whitelist()
@@ -131,4 +130,7 @@ def get_submission_status(sales_invoice_name):
 		
 	except Exception as e:
 		frappe.log_error(f"Status check failed for {sales_invoice_name}: {str(e)}")
-		frappe.throw(_("Status check failed: {0}").format(str(e))) 
+		frappe.throw(_("Status check failed: {0}").format(str(e)))
+
+
+ 

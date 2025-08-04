@@ -11,6 +11,7 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 import requests
 from requests.exceptions import RequestException, Timeout
+import frappe
 
 
 # Production API endpoint constants
@@ -132,6 +133,7 @@ class JoFotaraClient:
             
             # Send HTTP POST request with timeout
             logger.info(f"Submitting invoice to JoFotara API: {self.api_endpoint}")
+            
             response = requests.post(
                 url=self.api_endpoint,
                 headers=headers,
@@ -221,6 +223,7 @@ class JoFotaraClient:
         Returns:
             String containing formatted error message
         """
+        # Check for various error response formats
         if 'error' in response_data:
             error_obj = response_data['error']
             if isinstance(error_obj, dict):
@@ -234,8 +237,24 @@ class JoFotaraClient:
                 return error_msg
             else:
                 return str(error_obj)
-        else:
-            return f"API returned error status without error details"
+        
+        # Check for JoFotara specific error formats
+        if 'EINV_RESULTS' in response_data:
+            einv_results = response_data['EINV_RESULTS']
+            if 'ERRORS' in einv_results and einv_results['ERRORS']:
+                errors = []
+                for err in einv_results['ERRORS']:
+                    error_code = err.get('EINV_CODE', 'UNKNOWN')
+                    error_msg = err.get('EINV_MESSAGE', 'Unknown error')
+                    errors.append(f"{error_code}: {error_msg}")
+                return " | ".join(errors)
+        
+        # Check for message field
+        if 'message' in response_data:
+            return str(response_data['message'])
+        
+        # Return full response data for debugging if no standard error format found
+        return f"API error response: {str(response_data)}"
             
     def validate_credentials(self, company_config: Dict[str, Any]) -> Tuple[bool, str]:
         """

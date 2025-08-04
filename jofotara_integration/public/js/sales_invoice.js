@@ -1,17 +1,23 @@
 frappe.ui.form.on('Sales Invoice', {
 	refresh: function(frm) {
+		// Clean up any stuck progress indicators from previous sessions
+		hide_submission_progress(frm);
+		
 		// Add JoFotara submission button for submitted invoices
 		if (frm.doc.docstatus === 1) {
 			add_jofotara_submission_button(frm);
 		}
 		
-		// Setup real-time listeners for submission updates
-		setup_realtime_listeners(frm);
+		// Setup real-time listeners for submission updates (only once per form instance)
+		if (!frm.jofotara_listeners_setup) {
+			setup_realtime_listeners(frm);
+			frm.jofotara_listeners_setup = true;
+		}
 	}
 });
 
 function add_jofotara_submission_button(frm) {
-	const einvoice_status = frm.doc.custom_einvoice_status || frm.doc.e_invoice_status;
+	const einvoice_status = frm.doc.custom_einvoice_status;
 	
 	// Only show button if not already accepted
 	if (einvoice_status !== 'Accepted') {
@@ -27,6 +33,8 @@ function add_jofotara_submission_button(frm) {
 	frm.add_custom_button(__('Check Status'), function() {
 		check_submission_status(frm);
 	}, __('Actions'));
+	
+
 	
 	// Add retry button for rejected invoices
 	if (einvoice_status === 'Rejected') {
@@ -45,7 +53,6 @@ function submit_to_jofotara(frm) {
 	}
 	
 	// Show progress dialog
-	const progress_dialog = show_progress_dialog('Submitting to JoFotara...', 'Preparing submission...');
 	
 	frappe.call({
 		method: 'jofotara_integration.api.submission.submit_invoice_to_jofotara',
@@ -53,28 +60,17 @@ function submit_to_jofotara(frm) {
 			sales_invoice_name: frm.doc.name
 		},
 		callback: function(response) {
-			progress_dialog.hide();
-			
 			if (response.message) {
 				const result = response.message;
 				
 				if (result.status === 'queued') {
-					frappe.msgprint({
-						title: __('Submission Queued'),
-						message: __('Your invoice has been queued for submission to JoFotara. You will be notified when the process completes.'),
-						indicator: 'blue'
-					});
-					
-					// Show ongoing progress
-					show_submission_progress(frm, result.job_id);
-					
+					// Real-time notification will handle user feedback
 					// Refresh form to update status
 					frm.reload_doc();
 				}
 			}
 		},
 		error: function(error) {
-			progress_dialog.hide();
 			
 			let error_message = __('Submission failed');
 			if (error.message) {
@@ -171,42 +167,17 @@ function retry_submission(frm) {
 	);
 }
 
-function show_progress_dialog(title, message) {
-	const dialog = new frappe.ui.Dialog({
-		title: title,
-		fields: [
-			{
-				fieldtype: 'HTML',
-				fieldname: 'progress_html',
-				options: `
-					<div class="text-center">
-						<div class="spinner-border text-primary" role="status">
-							<span class="sr-only">Loading...</span>
-						</div>
-						<p class="mt-3">${message}</p>
-					</div>
-				`
-			}
-		],
-		size: 'small',
-		static: true
-	});
-	
-	dialog.show();
-	return dialog;
+
+
+function hide_submission_progress(frm) {
+	// Helper function to clean up any stuck progress indicators
+	if (frm.jofotara_progress) {
+		frm.jofotara_progress.remove();
+		frm.jofotara_progress = null;
+	}
 }
 
-function show_submission_progress(frm, job_id) {
-	// Show a temporary progress indicator
-	const progress_area = frm.dashboard.add_progress(__('JoFotara Submission'), 'blue');
-	
-	// Auto-hide after 30 seconds (reasonable time for submission)
-	setTimeout(() => {
-		if (progress_area) {
-			progress_area.remove();
-		}
-	}, 30000);
-}
+// Dashboard progress indicator removed - using only modal progress dialog
 
 function setup_realtime_listeners(frm) {
 	// Listen for submission completion events

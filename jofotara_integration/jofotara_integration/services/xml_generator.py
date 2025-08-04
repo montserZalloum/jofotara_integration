@@ -21,7 +21,7 @@ class UBLXMLGenerator:
     JoFotara technical specifications.
     """
     
-    # UBL 2.1 namespace definitions as per JoFotara specification
+    # UBL 2.1 Namespaces for XML generation
     NAMESPACES = {
         None: "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
         'cac': "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
@@ -30,7 +30,7 @@ class UBLXMLGenerator:
     }
     
     def __init__(self):
-        """Initialize the XML generator with proper namespace configuration."""
+        """Initialize UBL XML Generator with namespace mappings."""
         self.nsmap = self.NAMESPACES
     
     def generate_xml(self, sales_invoice: Dict[str, Any], icv_counter: int) -> str:
@@ -52,14 +52,41 @@ class UBLXMLGenerator:
             # Create root element with namespaces
             root = etree.Element("Invoice", nsmap=self.nsmap)
             
-            # Add mandatory elements
+            # Build XML in the EXACT required order as per JoFotara specification
+            
+            # 1. Main Invoice Information
             self._add_profile_id(root)
             self._add_invoice_id(root, sales_invoice)
             self._add_uuid(root)
             self._add_issue_date(root, sales_invoice)
+            self._add_issue_time(root)
             self._add_invoice_type_code(root, sales_invoice)
+            self._add_note(root, sales_invoice)
             self._add_currency_codes(root, sales_invoice)
+            
+            # 2. Additional Document Reference (ICV)
             self._add_icv_document_reference(root, icv_counter)
+            
+            # 3. Accounting Supplier Party (Seller details)
+            self._add_accounting_supplier_party(root, sales_invoice)
+            
+            # 4. Accounting Customer Party (Buyer details)
+            self._add_accounting_customer_party(root, sales_invoice)
+            
+            # 5. Seller Supplier Party (Activity Serial Number)
+            self._add_seller_supplier_party(root, sales_invoice)
+            
+            # 6. Document Level Allowance/Discount
+            self._add_document_level_allowance(root, sales_invoice)
+            
+            # 7. Tax Total
+            self._add_tax_total(root, sales_invoice)
+            
+            # 8. Legal Monetary Total
+            self._add_legal_monetary_total(root, sales_invoice)
+            
+            # 9. Invoice Lines
+            self._add_invoice_lines(root, sales_invoice)
             
             # Generate XML string with declaration
             xml_str = etree.tostring(
@@ -100,13 +127,28 @@ class UBLXMLGenerator:
             issue_date.text = posting_date.strftime('%Y-%m-%d') if posting_date else datetime.now().strftime('%Y-%m-%d')
     
     def _add_invoice_type_code(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
-        """Add InvoiceTypeCode with 3-digit code in name attribute."""
+        """Add InvoiceTypeCode with JoFotara compliance based on working reference."""
         type_code_elem = etree.SubElement(root, "{%s}InvoiceTypeCode" % self.nsmap['cbc'])
         
-        # Determine invoice type code
-        type_code = self.determine_invoice_type_code(sales_invoice)
-        type_code_elem.text = "388"  # Standard invoice value
-        type_code_elem.set("name", type_code)
+        # Determine payment method name using simple POS logic (matches working implementation)
+        # 011 = Cash/POS transactions, 021 = Credit/non-POS transactions
+        is_pos = sales_invoice.get('is_pos', 0)
+        payment_method_name = "011" if is_pos else "021"
+        
+        # Determine if this is a return/credit invoice
+        is_return = sales_invoice.get('is_return', 0)
+        
+        if is_return:
+            # Return/Credit invoice
+            type_code_elem.text = "381"
+        else:
+            # New invoice
+            type_code_elem.text = "388"
+        
+        # Add the mandatory 'name' attribute with payment method code
+        type_code_elem.set('name', payment_method_name)
+    
+
     
     def _add_currency_codes(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
         """Add DocumentCurrencyCode and TaxCurrencyCode."""
@@ -128,25 +170,190 @@ class UBLXMLGenerator:
         ref_uuid = etree.SubElement(doc_ref, "{%s}UUID" % self.nsmap['cbc'])
         ref_uuid.text = str(icv_counter)
     
-    def determine_invoice_type_code(self, invoice_data: Dict[str, Any]) -> str:
-        """
-        Calculate 3-digit invoice type code based on invoice characteristics.
+    def _add_issue_time(self, root: etree.Element) -> None:
+        """Add IssueTime element."""
+        issue_time = etree.SubElement(root, "{%s}IssueTime" % self.nsmap['cbc'])
+        issue_time.text = "00:00:00"
+    
+    def _add_note(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add Note element."""
+        note = etree.SubElement(root, "{%s}Note" % self.nsmap['cbc'])
+        note.text = sales_invoice.get('terms') or "Sales Invoice"
+    
+    def _add_accounting_supplier_party(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add AccountingSupplierParty element with seller details."""
+        supplier_party = etree.SubElement(root, "{%s}AccountingSupplierParty" % self.nsmap['cac'])
+        party = etree.SubElement(supplier_party, "{%s}Party" % self.nsmap['cac'])
         
-        Args:
-            invoice_data: Sales Invoice document data
+        # Postal Address
+        postal_address = etree.SubElement(party, "{%s}PostalAddress" % self.nsmap['cac'])
+        country = etree.SubElement(postal_address, "{%s}Country" % self.nsmap['cac'])
+        etree.SubElement(country, "{%s}IdentificationCode" % self.nsmap['cbc']).text = "JO"
+        
+        # Party Tax Scheme (Company Tax ID)
+        party_tax_scheme = etree.SubElement(party, "{%s}PartyTaxScheme" % self.nsmap['cac'])
+        
+        # Get company tax ID from Company doctype
+        company_name = sales_invoice.get('company')
+        company_tax_id = "NA"
+        try:
+            if company_name:
+                company_doc = frappe.get_doc("Company", company_name)
+                company_tax_id = company_doc.get('tax_id') or "NA"
+        except Exception as e:
+            frappe.log_error(f"Error getting company tax ID: {str(e)}", "UBL XML Generator")
             
-        Returns:
-            str: 3-digit invoice type code
+        etree.SubElement(party_tax_scheme, "{%s}CompanyID" % self.nsmap['cbc']).text = str(company_tax_id)
+        tax_scheme = etree.SubElement(party_tax_scheme, "{%s}TaxScheme" % self.nsmap['cac'])
+        etree.SubElement(tax_scheme, "{%s}ID" % self.nsmap['cbc']).text = "VAT"
+        
+        # Party Legal Entity
+        party_legal_entity = etree.SubElement(party, "{%s}PartyLegalEntity" % self.nsmap['cac'])
+        company_name = sales_invoice.get('company') or "Company Name"
+        etree.SubElement(party_legal_entity, "{%s}RegistrationName" % self.nsmap['cbc']).text = str(company_name)
+    
+    def _add_accounting_customer_party(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add AccountingCustomerParty element with buyer details."""
+        customer_party = etree.SubElement(root, "{%s}AccountingCustomerParty" % self.nsmap['cac'])
+        party = etree.SubElement(customer_party, "{%s}Party" % self.nsmap['cac'])
+        
+        # Get customer tax ID from Customer doctype
+        customer_name = sales_invoice.get('customer')
+        customer_tax_id = "NA"
+        try:
+            if customer_name:
+                customer_doc = frappe.get_doc("Customer", customer_name)
+                customer_tax_id = customer_doc.get('tax_id') or "NA"
+        except Exception as e:
+            frappe.log_error(f"Error getting customer tax ID: {str(e)}", "UBL XML Generator")
+        
+        # Party Identification
+        party_identification = etree.SubElement(party, "{%s}PartyIdentification" % self.nsmap['cac'])
+        id_scheme = "TIN" if customer_tax_id != "NA" else "NAT"
+        etree.SubElement(party_identification, "{%s}ID" % self.nsmap['cbc'], schemeID=id_scheme).text = str(customer_tax_id)
+        
+        # Postal Address
+        postal_address = etree.SubElement(party, "{%s}PostalAddress" % self.nsmap['cac'])
+        country = etree.SubElement(postal_address, "{%s}Country" % self.nsmap['cac'])
+        etree.SubElement(country, "{%s}IdentificationCode" % self.nsmap['cbc']).text = "JO"
+        
+        # Party Tax Scheme
+        party_tax_scheme = etree.SubElement(party, "{%s}PartyTaxScheme" % self.nsmap['cac'])
+        tax_scheme = etree.SubElement(party_tax_scheme, "{%s}TaxScheme" % self.nsmap['cac'])
+        etree.SubElement(tax_scheme, "{%s}ID" % self.nsmap['cbc']).text = "VAT"
+        
+        # Party Legal Entity
+        party_legal_entity = etree.SubElement(party, "{%s}PartyLegalEntity" % self.nsmap['cac'])
+        customer_name = sales_invoice.get('customer_name') or sales_invoice.get('customer') or "Customer Name"
+        etree.SubElement(party_legal_entity, "{%s}RegistrationName" % self.nsmap['cbc']).text = str(customer_name)
+    
+    def _add_seller_supplier_party(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add SellerSupplierParty element with Activity Serial Number."""
+        # Get Company document to fetch activity serial number
+        company_name = sales_invoice.get('company')
+        if company_name:
+            try:
+                company_doc = frappe.get_doc("Company", company_name)
+                activity_serial = company_doc.get("jofotara_activity_serial")
+                
+                if not activity_serial:
+                    raise ValueError(f"Activity Serial Number not configured for company {company_name}")
+                
+                seller_party = etree.SubElement(root, "{%s}SellerSupplierParty" % self.nsmap['cac'])
+                party = etree.SubElement(seller_party, "{%s}Party" % self.nsmap['cac'])
+                party_identification = etree.SubElement(party, "{%s}PartyIdentification" % self.nsmap['cac'])
+                etree.SubElement(party_identification, "{%s}ID" % self.nsmap['cbc']).text = str(activity_serial)
+            except Exception as e:
+                frappe.log_error(f"Error getting activity serial number: {str(e)}", "UBL XML Generator")
+                # Add placeholder if company data not available
+                seller_party = etree.SubElement(root, "{%s}SellerSupplierParty" % self.nsmap['cac'])
+                party = etree.SubElement(seller_party, "{%s}Party" % self.nsmap['cac'])
+                party_identification = etree.SubElement(party, "{%s}PartyIdentification" % self.nsmap['cac'])
+                etree.SubElement(party_identification, "{%s}ID" % self.nsmap['cbc']).text = "1"
+    
+    def _add_document_level_allowance(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add document-level AllowanceCharge element."""
+        allowance_charge = etree.SubElement(root, "{%s}AllowanceCharge" % self.nsmap['cac'])
+        etree.SubElement(allowance_charge, "{%s}ChargeIndicator" % self.nsmap['cbc']).text = "false"
+        etree.SubElement(allowance_charge, "{%s}AllowanceChargeReason" % self.nsmap['cbc']).text = "discount"
+        
+        discount_amount = sales_invoice.get('discount_amount') or 0.00
+        currency = sales_invoice.get('currency', 'JOD')
+        etree.SubElement(allowance_charge, "{%s}Amount" % self.nsmap['cbc'], currencyID=currency).text = f"{discount_amount:.2f}"
+    
+    def _add_tax_total(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add TaxTotal element."""
+        tax_total = etree.SubElement(root, "{%s}TaxTotal" % self.nsmap['cac'])
+        
+        total_taxes = sales_invoice.get('total_taxes_and_charges') or 0.00
+        currency = sales_invoice.get('currency', 'JOD')
+        etree.SubElement(tax_total, "{%s}TaxAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{total_taxes:.2f}"
+        
+        # Add tax subtotal
+        tax_subtotal = etree.SubElement(tax_total, "{%s}TaxSubtotal" % self.nsmap['cac'])
+        net_total = sales_invoice.get('net_total') or 0.00
+        etree.SubElement(tax_subtotal, "{%s}TaxableAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{net_total:.2f}"
+        etree.SubElement(tax_subtotal, "{%s}TaxAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{total_taxes:.2f}"
+        
+        # Tax Category
+        tax_category = etree.SubElement(tax_subtotal, "{%s}TaxCategory" % self.nsmap['cac'])
+        category_id = "S" if total_taxes > 0 else "Z"  # S for standard rate, Z for zero rate
+        etree.SubElement(tax_category, "{%s}ID" % self.nsmap['cbc']).text = category_id
+        
+        # Calculate tax percentage
+        tax_percent = 0.00
+        if net_total > 0 and total_taxes > 0:
+            tax_percent = (total_taxes / net_total) * 100
+        etree.SubElement(tax_category, "{%s}Percent" % self.nsmap['cbc']).text = f"{tax_percent:.2f}"
+        
+        # Tax Scheme
+        tax_scheme = etree.SubElement(tax_category, "{%s}TaxScheme" % self.nsmap['cac'])
+        etree.SubElement(tax_scheme, "{%s}ID" % self.nsmap['cbc']).text = "VAT"
+    
+    def _add_legal_monetary_total(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add LegalMonetaryTotal element."""
+        monetary_total = etree.SubElement(root, "{%s}LegalMonetaryTotal" % self.nsmap['cac'])
+        
+        currency = sales_invoice.get('currency', 'JOD')
+        net_total = sales_invoice.get('net_total') or 0.00
+        grand_total = sales_invoice.get('grand_total') or 0.00
+        discount_amount = sales_invoice.get('discount_amount') or 0.00
+        
+        etree.SubElement(monetary_total, "{%s}TaxExclusiveAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{net_total:.2f}"
+        etree.SubElement(monetary_total, "{%s}TaxInclusiveAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{grand_total:.2f}"
+        etree.SubElement(monetary_total, "{%s}AllowanceTotalAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{discount_amount:.2f}"
+        etree.SubElement(monetary_total, "{%s}PayableAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{grand_total:.2f}"
+    
+    def _add_invoice_lines(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add InvoiceLine elements for each item."""
+        items = sales_invoice.get('items', [])
+        currency = sales_invoice.get('currency', 'JOD')
+        
+        for idx, item in enumerate(items, 1):
+            invoice_line = etree.SubElement(root, "{%s}InvoiceLine" % self.nsmap['cac'])
             
-        Logic:
-            - Local/Export/Development Area classification
-            - Cash/Credit payment terms 
-            - Income/General Sales/Special Sales categorization
-        """
-        # For standard invoices, return 388 as specified
-        # Future enhancement: implement 3-digit code logic for Local/Export/Development Area
-        # + Cash/Credit + Income/General Sales/Special Sales combinations
-        return "388"
+            etree.SubElement(invoice_line, "{%s}ID" % self.nsmap['cbc']).text = str(idx)
+            
+            qty = item.get('qty', 1)
+            uom = item.get('uom', 'PCE')
+            etree.SubElement(invoice_line, "{%s}InvoicedQuantity" % self.nsmap['cbc'], unitCode=uom).text = str(qty)
+            
+            amount = item.get('amount', 0.00)
+            etree.SubElement(invoice_line, "{%s}LineExtensionAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{amount:.2f}"
+            
+            # Tax Total for line item (simplified)
+            line_tax_total = etree.SubElement(invoice_line, "{%s}TaxTotal" % self.nsmap['cac'])
+            etree.SubElement(line_tax_total, "{%s}TaxAmount" % self.nsmap['cbc'], currencyID=currency).text = "0.00"
+            
+            # Item details
+            item_element = etree.SubElement(invoice_line, "{%s}Item" % self.nsmap['cac'])
+            item_name = item.get('item_name') or item.get('item_code', 'Item')
+            etree.SubElement(item_element, "{%s}Name" % self.nsmap['cbc']).text = str(item_name)
+            
+            # Price details
+            price = etree.SubElement(invoice_line, "{%s}Price" % self.nsmap['cac'])
+            rate = item.get('rate', 0.00)
+            etree.SubElement(price, "{%s}PriceAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{rate:.2f}"
     
     def validate_xml_schema(self, xml_content: str) -> Dict[str, Any]:
         """
@@ -188,17 +395,10 @@ class UBLXMLGenerator:
                 'warnings': []
             }
             
-        except etree.XMLSyntaxError as e:
-            return {
-                'is_valid': False,
-                'errors': [f"XML Syntax Error: {str(e)}"],
-                'warnings': []
-            }
         except Exception as e:
-            frappe.log_error(f"XML Schema validation failed: {str(e)}", "UBL XML Generator")
             return {
                 'is_valid': False,
-                'errors': [f"Validation error: {str(e)}"],
+                'errors': [f"XML parsing error: {str(e)}"],
                 'warnings': []
             }
     
