@@ -53,10 +53,19 @@ def add_custom_fields():
                 "insert_after": "jofotara_activity_serial"
             },
             {
+                "fieldname": "jofotara_auto_submit",
+                "label": "Auto Submit to JoFotara",
+                "fieldtype": "Check",
+                "insert_after": "jofotara_column_break",
+                "depends_on": "jofotara_is_active",
+                "default": 0,
+                "description": "Enable auto submission to JoFotara"
+            },
+            {
                 "fieldname": "current_icv_counter",
                 "label": "Current ICV Counter",
                 "fieldtype": "Int",
-                "insert_after": "jofotara_column_break",
+                "insert_after": "jofotara_auto_submit",
                 "depends_on": "jofotara_is_active",
                 "read_only": 1,
                 "default": 0,
