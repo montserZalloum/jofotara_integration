@@ -109,10 +109,14 @@ def process_invoice_submission(sales_invoice, company):
 		xml_generator = UBLXMLGenerator()
 		client = JoFotaraClient()
 		
-		# Generate UBL 2.1 XML (ICV counter will be implemented in Epic 2)
+		# Generate UBL 2.1 XML with actual ICV counter from invoice
 		# Convert Frappe document to dictionary for XML generator
 		invoice_data = invoice_doc.as_dict()
-		xml_content = xml_generator.generate_xml(invoice_data, icv_counter=1)
+		
+		# Get ICV counter from the assigned field (should be set by submission hook)
+		icv_counter = invoice_doc.get("custom_icv_counter") or 1
+		
+		xml_content = xml_generator.generate_xml(invoice_data, icv_counter=icv_counter)
 		
 		# Prepare company config dictionary for API client
 		client_id = company_doc.get("jofotara_client_id")

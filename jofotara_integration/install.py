@@ -2,8 +2,29 @@ import frappe
 import os
 
 def after_install():
-	"""Install print format after app installation"""
+	"""Install print format and custom fields after app installation"""
 	install_print_format()
+	install_custom_fields()
+
+
+def install_custom_fields():
+	"""Install custom fields for Company and Sales Invoice"""
+	try:
+		# Install Company custom fields
+		from jofotara_integration.custom.company import add_custom_fields as add_company_fields
+		add_company_fields()
+		print("✅ Company custom fields installed successfully")
+		
+		# Install Sales Invoice custom fields
+		from jofotara_integration.custom.sales_invoice import add_custom_fields as add_sales_invoice_fields
+		add_sales_invoice_fields()
+		print("✅ Sales Invoice custom fields installed successfully")
+		
+		frappe.db.commit()
+		
+	except Exception as e:
+		print(f"❌ Error installing custom fields: {e}")
+		frappe.db.rollback()
 
 def install_print_format():
 	"""Install the Invoice with QR Code print format"""
@@ -269,8 +290,9 @@ def get_print_format_html():
 		"""
 
 def after_migrate():
-	"""Run after migrations to ensure print format is installed"""
+	"""Run after migrations to ensure print format and custom fields are installed"""
 	install_print_format()
+	install_custom_fields()
 
 @frappe.whitelist()
 def install_qr_print_format():

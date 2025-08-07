@@ -110,7 +110,15 @@ class UBLXMLGenerator:
     def _add_invoice_id(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
         """Add Invoice ID element (must be unique per seller)."""
         invoice_id = etree.SubElement(root, "{%s}ID" % self.nsmap['cbc'])
-        invoice_id.text = sales_invoice.get('name', '')
+        
+        # Use the ICV counter as the main invoice ID for JoFotara compliance
+        # This ensures sequential numbering per company as required
+        icv_value = sales_invoice.get('custom_icv_counter')
+        if icv_value:
+            invoice_id.text = str(icv_value)
+        else:
+            # Fallback to Frappe invoice name if ICV not available
+            invoice_id.text = sales_invoice.get('name', '')
     
     def _add_uuid(self, root: etree.Element) -> None:
         """Add UUID element for universal unique identification."""
