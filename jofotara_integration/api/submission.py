@@ -37,9 +37,9 @@ def submit_invoice_to_jofotara(sales_invoice_name):
 		if invoice.get("custom_einvoice_status") == "Accepted":
 			frappe.throw(_("Invoice has already been accepted by JoFotara"))
 		
-		# Validate Company authentication credentials
+		# Validate Company configuration and credentials (AC: 3, 4, 5)
 		company_doc = frappe.get_doc("Company", invoice.company)
-		_validate_company_credentials(company_doc)
+		_validate_company_configuration(company_doc)
 		
 		# Check for duplicate submissions (prevent multiple simultaneous submissions)
 		job_name = f'jofotara_submission_{sales_invoice_name}'
@@ -65,16 +65,17 @@ def submit_invoice_to_jofotara(sales_invoice_name):
 		frappe.throw(_("Submission failed: {0}").format(str(e)))
 
 
-def _validate_company_credentials(company_doc):
+def _validate_company_configuration(company_doc):
 	"""
-	Validate Company JoFotara authentication credentials
+	Validate Company JoFotara configuration and credentials
 	
 	Args:
 		company_doc (Document): Company document
 		
 	Raises:
-		ValidationError: If credentials are missing or invalid
+		ValidationError: If configuration is invalid or credentials are missing
 	"""
+	# Check if JoFotara integration is active for this company (AC: 3)
 	if not company_doc.get("jofotara_is_active"):
 		frappe.throw(_("JoFotara integration is disabled for company {0}").format(company_doc.company_name))
 	
@@ -94,6 +95,19 @@ def _validate_company_credentials(company_doc):
 		import re
 		if not re.match(r'^\d{1,15}$', activity_serial):
 			frappe.throw(_("Activity Serial Number must be 1-15 digits only"))
+
+
+def _validate_company_credentials(company_doc):
+	"""
+	Legacy function - use _validate_company_configuration instead
+	
+	Args:
+		company_doc (Document): Company document
+		
+	Raises:
+		ValidationError: If credentials are missing or invalid
+	"""
+	return _validate_company_configuration(company_doc)
 
 
 @frappe.whitelist()

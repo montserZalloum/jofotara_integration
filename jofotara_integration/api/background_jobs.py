@@ -7,6 +7,46 @@ from jofotara_integration.jofotara_integration.services.jofotara_client import J
 from jofotara_integration.jofotara_integration.utils.jofotara_logger import log_api_submission
 
 
+def should_auto_submit_invoice(company_name):
+	"""
+	Check if automatic submission is enabled for a company (AC: 4)
+	
+	Args:
+		company_name (str): Company name
+		
+	Returns:
+		bool: True if auto submission is enabled, False otherwise
+	"""
+	try:
+		company_doc = frappe.get_doc("Company", company_name)
+		
+		# Company must be active and auto-submit must be enabled
+		is_active = bool(company_doc.get("jofotara_is_active"))
+		auto_submit = bool(company_doc.get("jofotara_auto_submit"))
+		
+		return is_active and auto_submit
+	except Exception:
+		return False
+
+
+def enqueue_automatic_submission(sales_invoice_name, company_name):
+	"""
+	Enqueue automatic invoice submission if enabled for company (AC: 4)
+	
+	Args:
+		sales_invoice_name (str): Name/ID of the Sales Invoice
+		company_name (str): Company name
+		
+	Returns:
+		Job|None: Frappe job object if queued, None if not eligible
+	"""
+	# Check if automatic submission is enabled for this company
+	if not should_auto_submit_invoice(company_name):
+		return None
+	
+	return enqueue_invoice_submission(sales_invoice_name, company_name)
+
+
 def enqueue_invoice_submission(sales_invoice_name, company_name):
 	"""
 	Enqueue invoice submission job for background processing
@@ -58,9 +98,9 @@ def process_invoice_submission(sales_invoice, company):
 		company (str): Company name
 	"""
 	try:
-		# Validate company authentication credentials
+		# Validate company authentication credentials and configuration
 		company_doc = frappe.get_doc("Company", company)
-		_validate_company_credentials(company_doc)
+		_validate_company_configuration(company_doc)
 		
 		# Get invoice document
 		invoice_doc = frappe.get_doc("Sales Invoice", sales_invoice)
@@ -165,16 +205,17 @@ def process_invoice_submission(sales_invoice, company):
 		raise
 
 
-def _validate_company_credentials(company_doc):
+def _validate_company_configuration(company_doc):
 	"""
-	Validate Company JoFotara authentication credentials
+	Validate Company JoFotara configuration and credentials
 	
 	Args:
 		company_doc (Document): Company document
 		
 	Raises:
-		Exception: If credentials are missing or invalid
+		Exception: If configuration is invalid or credentials are missing
 	"""
+	# Check if JoFotara integration is active for this company (AC: 3)
 	if not company_doc.get("jofotara_is_active"):
 		raise Exception(f"JoFotara integration is disabled for company {company_doc.company_name}")
 	
@@ -195,6 +236,19 @@ def _validate_company_credentials(company_doc):
 		import re
 		if not re.match(r'^\d{1,15}$', activity_serial):
 			raise Exception("Activity Serial Number must be 1-15 digits only")
+
+
+def _validate_company_credentials(company_doc):
+	"""
+	Legacy function - use _validate_company_configuration instead
+	
+	Args:
+		company_doc (Document): Company document
+		
+	Raises:
+		Exception: If credentials are missing or invalid
+	"""
+	return _validate_company_configuration(company_doc)
 
 
 def _send_completion_notification(sales_invoice, notification_type, details):

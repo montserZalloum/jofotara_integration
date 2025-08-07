@@ -3,6 +3,9 @@ frappe.ui.form.on('Sales Invoice', {
 		// Clean up any stuck progress indicators from previous sessions
 		hide_submission_progress(frm);
 		
+		// Add JoFotara configuration status indicator (AC: 6)
+		add_company_configuration_status(frm);
+		
 		// Add JoFotara submission button for submitted invoices
 		if (frm.doc.docstatus === 1) {
 			add_jofotara_submission_button(frm);
@@ -423,6 +426,93 @@ function generate_pdf_with_qr(frm) {
 			}
 		}
 	});
+}
+
+// Company Configuration Status Indicator (AC: 6)
+function add_company_configuration_status(frm) {
+	// Remove existing configuration status
+	remove_configuration_status(frm);
+	
+	if (frm.doc.company) {
+		// Fetch company configuration status
+		frappe.call({
+			method: 'jofotara_integration.api.company_config.get_company_configuration_status',
+			args: {
+				company_name: frm.doc.company
+			},
+			callback: function(response) {
+				if (response.message) {
+					create_configuration_status_display(frm, response.message);
+				}
+			},
+			error: function() {
+				// Silent fail - don't show configuration status if API fails
+			}
+		});
+	}
+}
+
+function create_configuration_status_display(frm, config_status) {
+	// Find the company field to insert status after
+	const company_field = frm.get_field('company');
+	if (!company_field || !company_field.$wrapper) {
+		return;
+	}
+	
+	const is_active = config_status.is_active;
+	const auto_submit = config_status.auto_submit;
+	const has_credentials = config_status.has_complete_credentials;
+	
+	// Determine overall status
+	let status_text, status_color, status_icon;
+	if (!is_active) {
+		status_text = __('JoFotara Integration Disabled');
+		status_color = '#666';
+		status_icon = 'fa-times-circle';
+	} else if (!has_credentials) {
+		status_text = __('JoFotara Integration - Missing Credentials');
+		status_color = '#f44336';
+		status_icon = 'fa-exclamation-triangle';
+	} else if (auto_submit) {
+		status_text = __('JoFotara Integration - Auto Submit Enabled');
+		status_color = '#4CAF50';
+		status_icon = 'fa-check-circle';
+	} else {
+		status_text = __('JoFotara Integration - Manual Submit Only');
+		status_color = '#ff9800';
+		status_icon = 'fa-hand-paper-o';
+	}
+	
+	const config_html = `
+		<div id="jofotara-config-status" style="margin-top: 10px; padding: 10px; background-color: #f5f5f5; border-radius: 4px; border-left: 4px solid ${status_color};">
+			<div style="display: flex; align-items: center; gap: 8px;">
+				<i class="fa ${status_icon}" style="color: ${status_color}; font-size: 16px;"></i>
+				<strong style="color: ${status_color};">${status_text}</strong>
+			</div>
+			<div style="margin-top: 6px; font-size: 12px; color: #666;">
+				${is_active ? 
+					(auto_submit ? 
+						__('Invoices will be automatically submitted to JoFotara after submission.') :
+						__('Invoices require manual submission to JoFotara.')
+					) :
+					__('JoFotara integration is disabled for this company.')
+				}
+				${!has_credentials && is_active ? 
+					`<br><span style="color: #f44336;">${__('Missing credentials: Client ID, Secret Key, or Activity Serial')}</span>` :
+					''
+				}
+			</div>
+		</div>
+	`;
+	
+	company_field.$wrapper.after(config_html);
+}
+
+function remove_configuration_status(frm) {
+	const existing_status = document.getElementById('jofotara-config-status');
+	if (existing_status) {
+		existing_status.remove();
+	}
 }
 
 // Real-time QR code validation
