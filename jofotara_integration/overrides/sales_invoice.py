@@ -22,21 +22,24 @@ def on_submit(doc, method):
 		# Attempt to enqueue automatic submission
 		job = enqueue_automatic_submission(doc.name, doc.company)
 		
-		if job:
-			frappe.msgprint(
-				_("Invoice automatically queued for JoFotara submission"),
-				title=_("Auto-Submission Enabled"),
-				indicator="blue"
-			)
 		
 	except Exception as e:
-		# Log the error but don't prevent invoice submission
-		frappe.log_error(
-			f"Auto-submission failed for Sales Invoice {doc.name}: {str(e)}",
-			"JoFotara Auto-Submission Error"
-		)
+		# Log the error to database instead of file to avoid permission issues
+		try:
+			frappe.db.sql("""
+				INSERT INTO `tabError Log` (`name`, `title`, `error`, `creation`, `owner`)
+				VALUES (%(name)s, %(title)s, %(error)s, NOW(), 'Administrator')
+			""", {
+				'name': frappe.generate_hash(length=10),
+				'title': "JoFotara Auto-Submission Error",
+				'error': f"Auto-submission failed for Sales Invoice {doc.name}: {str(e)}"
+			})
+			frappe.db.commit()
+		except Exception:
+			# If logging fails, continue anyway
+			pass
 		
-        # Show a non-blocking message to the user
+		# Show a non-blocking message to the user
 		frappe.msgprint(
 			_("Sales Invoice submitted successfully, but auto-submission to JoFotara failed. You can submit manually from the invoice."),
 			title=_("Auto-Submission Failed"),

@@ -52,12 +52,22 @@ def log_api_submission(sales_invoice: str, request_payload: Dict[str, Any],
         return sales_invoice  # Return something to indicate success
         
     except Exception as e:
-        # Fallback to error log if JoFotara Log creation fails
-        frappe.log_error(f"Failed to create JoFotara Log for {sales_invoice}: {str(e)}")
+        # Fallback to database logging if JoFotara Log creation fails
+        # Avoid frappe.log_error() which may have file permission issues in background jobs
         try:
-            frappe.log_error(f"Request data: {frappe.as_json(sanitized_request)}")
-            frappe.log_error(f"Response data: {frappe.as_json(response_data)}")
+            # Use frappe.db.sql for direct database logging as fallback
+            frappe.db.sql("""
+                INSERT INTO `tabError Log` (`name`, `title`, `error`, `creation`, `owner`)
+                VALUES (%(name)s, %(title)s, %(error)s, NOW(), 'Administrator')
+            """, {
+                'name': frappe.generate_hash(length=10),
+                'title': f"JoFotara Log Creation Failed",
+                'error': f"Failed to create JoFotara Log for {sales_invoice}: {str(e)}\nRequest: {frappe.as_json(sanitized_request)}\nResponse: {frappe.as_json(response_data)}"
+            })
+            frappe.db.commit()
         except Exception:
+            # If even database logging fails, just pass silently
+            # The main submission will still work, we just lose the log entry
             pass
         return None
 
