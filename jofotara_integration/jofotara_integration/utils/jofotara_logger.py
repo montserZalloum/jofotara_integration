@@ -37,13 +37,15 @@ def log_api_submission(sales_invoice: str, request_payload: Dict[str, Any],
         status = "Success" if success else "Error"
         
         # Create JoFotara Log document directly (simplified from multiple helper functions)
-        frappe.get_doc({
+        log_doc = {
             "doctype": "JoFotara Log",
             "sales_invoice": sales_invoice,
             "status": status,
+            "icv_value": sanitized_request.get("icv_value"),
             "request_payload": frappe.as_json(sanitized_request),
             "response_payload": frappe.as_json(response_data)
-        }).insert(ignore_permissions=True)
+        }
+        frappe.get_doc(log_doc).insert(ignore_permissions=True)
         
         frappe.db.commit()
         
@@ -52,8 +54,11 @@ def log_api_submission(sales_invoice: str, request_payload: Dict[str, Any],
     except Exception as e:
         # Fallback to error log if JoFotara Log creation fails
         frappe.log_error(f"Failed to create JoFotara Log for {sales_invoice}: {str(e)}")
-        frappe.log_error(f"Request data: {frappe.as_json(sanitized_request)}")
-        frappe.log_error(f"Response data: {frappe.as_json(response_data)}")
+        try:
+            frappe.log_error(f"Request data: {frappe.as_json(sanitized_request)}")
+            frappe.log_error(f"Response data: {frappe.as_json(response_data)}")
+        except Exception:
+            pass
         return None
 
 

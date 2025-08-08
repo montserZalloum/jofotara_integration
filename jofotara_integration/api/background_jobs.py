@@ -5,6 +5,7 @@ import json
 from jofotara_integration.jofotara_integration.services.xml_generator import UBLXMLGenerator
 from jofotara_integration.jofotara_integration.services.jofotara_client import JoFotaraClient
 from jofotara_integration.jofotara_integration.utils.jofotara_logger import log_api_submission
+from jofotara_integration.api.icv_counter import icv_counter_manager
 
 
 def should_auto_submit_invoice(company_name):
@@ -109,12 +110,16 @@ def process_invoice_submission(sales_invoice, company):
 		xml_generator = UBLXMLGenerator()
 		client = JoFotaraClient()
 		
-		# Generate UBL 2.1 XML with actual ICV counter from invoice
-		# Convert Frappe document to dictionary for XML generator
+		# Ensure ICV is assigned (reserve if missing) and get value
+		icv_counter = invoice_doc.get("custom_icv_counter") or 0
+		if not icv_counter or icv_counter <= 0:
+			icv_counter = icv_counter_manager.reserve_icv_for_invoice(company, sales_invoice)
+			# Reload invoice to reflect updated field
+			invoice_doc.reload()
+
+		# Build invoice data AFTER ICV is ensured, so custom_icv_counter is present
 		invoice_data = invoice_doc.as_dict()
-		
-		# Get ICV counter from the assigned field (should be set by submission hook)
-		icv_counter = invoice_doc.get("custom_icv_counter") or 1
+		invoice_data["custom_icv_counter"] = icv_counter
 		
 		xml_content = xml_generator.generate_xml(invoice_data, icv_counter=icv_counter)
 		
@@ -148,13 +153,14 @@ def process_invoice_submission(sales_invoice, company):
 			},
 			'invoice_name': invoice_doc.name,
 			'company': invoice_doc.company,
-			'xml_length': len(xml_content)
+            'xml_length': len(xml_content),
+            'icv_value': icv_counter
 		}
 		
 		# Submit to JoFotara API
 		response = client.submit_invoice(invoice_with_xml, company_config)
 		
-		# Log the API submission
+		# Log the API submission (include icv_value in payload)
 		log_api_submission(sales_invoice, request_payload, response, response.get('success', False))
 		
 		# Check if API call was successful

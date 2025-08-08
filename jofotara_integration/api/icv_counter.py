@@ -111,6 +111,85 @@ class ICVCounterManager:
         """
         if not company_name:
             return 0
+
+    def get_assigned_icv(self, sales_invoice_name):
+        """
+        Get the already assigned ICV for a Sales Invoice, if any.
+        
+        Args:
+            sales_invoice_name (str): Sales Invoice name/ID
+        
+        Returns:
+            int: Assigned ICV value or 0 if not assigned
+        """
+        if not sales_invoice_name:
+            return 0
+        try:
+            icv = frappe.db.get_value("Sales Invoice", sales_invoice_name, "custom_icv_counter")
+            return int(icv or 0)
+        except Exception:
+            return 0
+
+    def reserve_icv_for_invoice(self, company_name, sales_invoice_name):
+        """
+        Atomically reserve ICV for a Sales Invoice on first submission attempt.
+        If the invoice already has an assigned ICV (> 0), it is returned unchanged.
+        
+        This method increments the Company's current_icv_counter and writes the
+        reserved value to Sales Invoice.custom_icv_counter in the same locked
+        section to ensure idempotency and avoid race conditions.
+        
+        Args:
+            company_name (str): Company name
+            sales_invoice_name (str): Sales Invoice name/ID
+        
+        Returns:
+            int: The assigned ICV value for this invoice
+        """
+        if not company_name:
+            frappe.throw(_("Company name is required"))
+        if not sales_invoice_name:
+            frappe.throw(_("Sales Invoice name is required"))
+
+        with self._atomic_counter_operation():
+            # Re-check if already assigned to ensure idempotency
+            already_assigned = self.get_assigned_icv(sales_invoice_name)
+            if already_assigned and already_assigned > 0:
+                return already_assigned
+
+            # Validate existence
+            if not frappe.db.exists("Company", company_name):
+                frappe.throw(_("Company {0} not found").format(company_name))
+            if not frappe.db.exists("Sales Invoice", sales_invoice_name):
+                frappe.throw(_("Sales Invoice {0} not found").format(sales_invoice_name))
+
+            # Increment company counter atomically
+            frappe.db.sql(
+                """
+                UPDATE `tabCompany`
+                SET current_icv_counter = COALESCE(current_icv_counter, 0) + 1
+                WHERE name = %s
+                """,
+                (company_name,)
+            )
+
+            next_icv = frappe.db.get_value("Company", company_name, "current_icv_counter")
+            if not next_icv:
+                frappe.throw(_("Failed to retrieve updated ICV counter"))
+
+            # Persist ICV to invoice
+            frappe.db.set_value(
+                "Sales Invoice",
+                sales_invoice_name,
+                "custom_icv_counter",
+                int(next_icv),
+                update_modified=False,
+            )
+
+            frappe.logger().info(
+                f"ICV Reservation: Invoice {sales_invoice_name} assigned ICV {next_icv} for company {company_name}"
+            )
+            return int(next_icv)
         
         try:
             company_doc = frappe.get_doc("Company", company_name)
@@ -220,6 +299,34 @@ def get_next_icv_for_company(company_name):
             "success": False,
             "error": str(e)
         }
+
+
+@frappe.whitelist()
+def get_assigned_icv(sales_invoice_name):
+    """
+    API endpoint to get assigned ICV for a Sales Invoice (0 if none)
+    """
+    try:
+        if not frappe.has_permission("Sales Invoice", "read"):
+            frappe.throw(_("Insufficient permissions"))
+        value = icv_counter_manager.get_assigned_icv(sales_invoice_name)
+        return {"success": True, "assigned_icv": value}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@frappe.whitelist()
+def reserve_icv_for_invoice(company_name, sales_invoice_name):
+    """
+    API endpoint to reserve ICV for a Sales Invoice if not already assigned
+    """
+    try:
+        if not frappe.has_permission("Sales Invoice", "write"):
+            frappe.throw(_("Insufficient permissions"))
+        icv = icv_counter_manager.reserve_icv_for_invoice(company_name, sales_invoice_name)
+        return {"success": True, "assigned_icv": icv}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @frappe.whitelist()

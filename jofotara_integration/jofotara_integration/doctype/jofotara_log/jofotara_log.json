@@ -7,6 +7,7 @@
  "field_order": [
   "sales_invoice",
   "status",
+    "icv_value",
   "request_payload",
   "response_payload"
  ],
@@ -24,6 +25,11 @@
    "options": "Success\nError"
   },
   {
+      "fieldname": "icv_value",
+      "fieldtype": "Int",
+      "label": "ICV Value"
+    },
+    {
    "fieldname": "request_payload",
    "fieldtype": "Code",
    "label": "Request Payload"
