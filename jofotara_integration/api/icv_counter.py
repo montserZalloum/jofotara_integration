@@ -49,7 +49,9 @@ class ICVCounterManager:
                 if not next_icv:
                     frappe.throw(_("Failed to retrieve updated ICV counter"))
                 
-                frappe.logger().info(f"ICV Counter: Company {company_name} - assigned ICV {next_icv}")
+                # Log ICV assignment in development mode only
+                if frappe.conf.get('developer_mode'):
+                    frappe.msgprint(f"ICV Counter: Company {company_name} - assigned ICV {next_icv}")
                 
                 return int(next_icv)
                 
@@ -88,7 +90,9 @@ class ICVCounterManager:
                 0
             )
             
-            frappe.logger().info(f"ICV Counter: Initialized for company {company_name}")
+            # Log initialization in development mode only
+            if frappe.conf.get('developer_mode'):
+                frappe.msgprint(f"ICV Counter: Initialized for company {company_name}")
             
             return True
             
@@ -186,9 +190,10 @@ class ICVCounterManager:
                 update_modified=False,
             )
 
-            frappe.logger().info(
-                f"ICV Reservation: Invoice {sales_invoice_name} assigned ICV {next_icv} for company {company_name}"
-            )
+            # Log ICV assignment - use frappe.msgprint in development, silent in production
+            # if frappe.conf.get('developer_mode'):
+            #     frappe.msgprint(f"ICV Reservation: Invoice {sales_invoice_name} assigned ICV {next_icv}")
+            # # For production logging, we'll skip detailed logs to avoid permission issues
             return int(next_icv)
         
         try:
@@ -425,9 +430,12 @@ def validate_all_company_counters():
 		}
 		
 		if overall_status:
-			frappe.logger().info(f"ICV Counter System: All {len(companies)} companies passed integrity check")
+			# Log integrity check results in development mode only
+			if frappe.conf.get('developer_mode'):
+				frappe.msgprint(f"ICV Counter System: All {len(companies)} companies passed integrity check")
 		else:
-			frappe.logger().warning(f"ICV Counter System: Integrity issues found - check error logs")
+			# Log integrity issues using frappe.log_error which handles permissions better
+			frappe.log_error("ICV Counter System: Integrity issues found", "ICV Integrity Check")
 		
 		return summary
 		

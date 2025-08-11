@@ -121,7 +121,10 @@ def process_invoice_submission(sales_invoice, company):
 		invoice_data = invoice_doc.as_dict()
 		invoice_data["custom_icv_counter"] = icv_counter
 		
-		xml_content = xml_generator.generate_xml(invoice_data, icv_counter=icv_counter)
+		# Generate XML and get both content and UUID
+		xml_result = xml_generator.generate_xml(invoice_data, icv_counter=icv_counter)
+		xml_content = xml_result['xml_content']
+		generated_uuid = xml_result['uuid']
 		
 		# Prepare company config dictionary for API client
 		client_id = company_doc.get("jofotara_client_id")
@@ -168,11 +171,8 @@ def process_invoice_submission(sales_invoice, company):
 			# Update invoice status and store response data for successful submission
 			update_data = {
 				'custom_einvoice_status': 'Accepted',
+				'custom_einvoice_uuid': generated_uuid  # Use the generated UUID from XML, not response
 			}
-			
-			# Store UUID if present in response
-			if response.get('uuid'):
-				update_data['custom_einvoice_uuid'] = response.get('uuid')
 			
 			# Store QR code if present in response
 			if response.get('qr_code'):
@@ -184,7 +184,7 @@ def process_invoice_submission(sales_invoice, company):
 			# Send success notification
 			_send_completion_notification(sales_invoice, 'success', {
 				'status': 'Accepted',
-				'uuid': response.get('uuid'),
+				'uuid': generated_uuid,  # Use the generated UUID from XML, not response
 				'message': _("Invoice successfully submitted to JoFotara")
 			})
 		else:

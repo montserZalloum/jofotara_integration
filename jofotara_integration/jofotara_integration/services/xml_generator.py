@@ -33,7 +33,7 @@ class UBLXMLGenerator:
         """Initialize UBL XML Generator with namespace mappings."""
         self.nsmap = self.NAMESPACES
     
-    def generate_xml(self, sales_invoice: Dict[str, Any], icv_counter: int) -> str:
+    def generate_xml(self, sales_invoice: Dict[str, Any], icv_counter: int) -> Dict[str, str]:
         """
         Generate UBL 2.1 compliant XML for a Sales Invoice.
         
@@ -42,13 +42,18 @@ class UBLXMLGenerator:
             icv_counter: Invoice Counter Value for sequential numbering
             
         Returns:
-            str: Generated XML string with proper UBL 2.1 structure
+            Dict[str, str]: Dictionary containing:
+                - xml_content: Generated XML string with proper UBL 2.1 structure
+                - uuid: The generated UUID for the invoice
             
         Raises:
             ValueError: If required invoice data is missing
             Exception: If XML generation fails
         """
         try:
+            # Generate UUID that will be used in the XML and saved to the invoice
+            generated_uuid = str(uuid.uuid4())
+            
             # Create root element with namespaces
             root = etree.Element("Invoice", nsmap=self.nsmap)
             
@@ -57,7 +62,7 @@ class UBLXMLGenerator:
             # 1. Main Invoice Information
             self._add_profile_id(root)
             self._add_invoice_id(root, sales_invoice)
-            self._add_uuid(root)
+            self._add_uuid(root, generated_uuid)
             self._add_issue_date(root, sales_invoice)
             self._add_issue_time(root)
             self._add_invoice_type_code(root, sales_invoice)
@@ -96,7 +101,10 @@ class UBLXMLGenerator:
                 encoding='UTF-8'
             ).decode('utf-8')
             
-            return xml_str
+            return {
+                'xml_content': xml_str,
+                'uuid': generated_uuid
+            }
             
         except Exception as e:
             frappe.log_error(f"XML Generation failed: {str(e)}", "UBL XML Generator")
@@ -120,10 +128,10 @@ class UBLXMLGenerator:
             # Fallback to Frappe invoice name if ICV not available
             invoice_id.text = sales_invoice.get('name', '')
     
-    def _add_uuid(self, root: etree.Element) -> None:
+    def _add_uuid(self, root: etree.Element, generated_uuid: str) -> None:
         """Add UUID element for universal unique identification."""
         uuid_elem = etree.SubElement(root, "{%s}UUID" % self.nsmap['cbc'])
-        uuid_elem.text = str(uuid.uuid4())
+        uuid_elem.text = generated_uuid
     
     def _add_issue_date(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
         """Add IssueDate in YYYY-MM-DD format."""
