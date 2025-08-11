@@ -106,6 +106,11 @@ def process_invoice_submission(sales_invoice, company):
 		# Get invoice document
 		invoice_doc = frappe.get_doc("Sales Invoice", sales_invoice)
 		
+		# Validate Credit Note requirements if applicable
+		if invoice_doc.get('is_return', 0):
+			from jofotara_integration.jofotara_integration.utils.validation import validate_credit_note_before_submission
+			validate_credit_note_before_submission(sales_invoice)
+		
 		# Initialize services with company config
 		xml_generator = UBLXMLGenerator()
 		client = JoFotaraClient()
@@ -146,6 +151,7 @@ def process_invoice_submission(sales_invoice, company):
 		}
 		
 		# Prepare request payload for logging
+		is_credit_note = invoice_doc.get('is_return', 0)
 		request_payload = {
 			'endpoint': client.api_endpoint,
 			'method': 'POST',
@@ -156,6 +162,8 @@ def process_invoice_submission(sales_invoice, company):
 			},
 			'invoice_name': invoice_doc.name,
 			'company': invoice_doc.company,
+			'invoice_type': 'Credit Note' if is_credit_note else 'Regular Invoice',
+			'return_against': invoice_doc.get('return_against') if is_credit_note else None,
             'xml_length': len(xml_content),
             'icv_value': icv_counter
 		}
@@ -182,10 +190,11 @@ def process_invoice_submission(sales_invoice, company):
 			frappe.db.commit()
 			
 			# Send success notification
+			notification_message = _("Credit Note successfully submitted to JoFotara") if is_credit_note else _("Invoice successfully submitted to JoFotara")
 			_send_completion_notification(sales_invoice, 'success', {
 				'status': 'Accepted',
 				'uuid': generated_uuid,  # Use the generated UUID from XML, not response
-				'message': _("Invoice successfully submitted to JoFotara")
+				'message': notification_message
 			})
 		else:
 			# API call failed, raise exception to trigger error handling

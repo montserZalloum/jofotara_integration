@@ -11,6 +11,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, Any, Optional
 import frappe
 from lxml import etree
+from jofotara_integration.jofotara_integration.utils.validation import validate_original_invoice_for_credit_note
 
 
 class UBLXMLGenerator:
@@ -32,6 +33,21 @@ class UBLXMLGenerator:
     def __init__(self):
         """Initialize UBL XML Generator with namespace mappings."""
         self.nsmap = self.NAMESPACES
+    
+    def _convert_amount_for_credit_note(self, amount: float, is_return: bool) -> float:
+        """
+        Convert negative Credit Note amounts to positive values for UBL XML.
+        
+        Args:
+            amount: Original amount from ERPNext (negative for Credit Notes)
+            is_return: Whether this is a Credit Note/return invoice
+            
+        Returns:
+            float: Positive amount for UBL XML or original amount for regular invoices
+        """
+        if is_return and amount < 0:
+            return abs(amount)
+        return amount
     
     def generate_xml(self, sales_invoice: Dict[str, Any], icv_counter: int) -> Dict[str, str]:
         """
@@ -69,28 +85,40 @@ class UBLXMLGenerator:
             self._add_note(root, sales_invoice)
             self._add_currency_codes(root, sales_invoice)
             
-            # 2. Additional Document Reference (ICV)
+            # 2. BillingReference for Credit Notes (must come before AdditionalDocumentReference)
+            if sales_invoice.get('is_return', 0):
+                self._add_billing_reference(root, sales_invoice)
+            
+            # 3. Additional Document Reference (ICV)
             self._add_icv_document_reference(root, icv_counter)
             
-            # 3. Accounting Supplier Party (Seller details)
+            # 3.1. Additional Document Reference for Original Invoice Total (Credit Notes)
+            if sales_invoice.get('is_return', 0):
+                self._add_original_invoice_total_reference(root, sales_invoice)
+            
+            # 4. Accounting Supplier Party (Seller details)
             self._add_accounting_supplier_party(root, sales_invoice)
             
-            # 4. Accounting Customer Party (Buyer details)
+            # 5. Accounting Customer Party (Buyer details)
             self._add_accounting_customer_party(root, sales_invoice)
             
-            # 5. Seller Supplier Party (Activity Serial Number)
+            # 6. Seller Supplier Party (Activity Serial Number)
             self._add_seller_supplier_party(root, sales_invoice)
             
-            # 6. Document Level Allowance/Discount
+            # 7. PaymentMeans for Credit Notes (if applicable)
+            if sales_invoice.get('is_return', 0):
+                self._add_payment_means(root, sales_invoice)
+            
+            # 8. Document Level Allowance/Discount
             self._add_document_level_allowance(root, sales_invoice)
             
-            # 7. Tax Total
+            # 9. Tax Total
             self._add_tax_total(root, sales_invoice)
             
-            # 8. Legal Monetary Total
+            # 10. Legal Monetary Total
             self._add_legal_monetary_total(root, sales_invoice)
             
-            # 9. Invoice Lines
+            # 11. Invoice Lines
             self._add_invoice_lines(root, sales_invoice)
             
             # Generate XML string with declaration
@@ -185,6 +213,133 @@ class UBLXMLGenerator:
         
         ref_uuid = etree.SubElement(doc_ref, "{%s}UUID" % self.nsmap['cbc'])
         ref_uuid.text = str(icv_counter)
+    
+    def _add_billing_reference(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add BillingReference element for Credit Notes with original invoice details."""
+        return_against = sales_invoice.get('return_against')
+        
+        # Validate original invoice using utility function
+        validation_result = validate_original_invoice_for_credit_note(return_against)
+        
+        if not validation_result.get('is_valid'):
+            error_message = validation_result.get('error_message', 'Original invoice validation failed')
+            frappe.throw(error_message)
+        
+        try:
+            # Extract validated details
+            original_uuid = validation_result.get('original_uuid')
+            original_invoice_data = validation_result.get('original_invoice', {})
+            
+            # Create BillingReference element
+            billing_ref = etree.SubElement(root, "{%s}BillingReference" % self.nsmap['cac'])
+            
+            # Add InvoiceDocumentReference with original invoice details
+            invoice_doc_ref = etree.SubElement(billing_ref, "{%s}InvoiceDocumentReference" % self.nsmap['cac'])
+            
+            # Add original invoice ID
+            doc_ref_id = etree.SubElement(invoice_doc_ref, "{%s}ID" % self.nsmap['cbc'])
+            original_icv = original_invoice_data.get('custom_icv_counter')
+            if original_icv:
+                doc_ref_id.text = str(original_icv)
+            else:
+                # Fallback to original invoice name if ICV is missing (should not happen)
+                doc_ref_id.text = return_against
+            
+            # Get original total for use in multiple places
+            original_total = original_invoice_data.get('grand_total', 0.0)
+            
+            # Add original invoice UUID
+            doc_ref_uuid = etree.SubElement(invoice_doc_ref, "{%s}UUID" % self.nsmap['cbc'])
+            doc_ref_uuid.text = original_uuid
+            
+            # Add IssueDate from original invoice if available
+            original_date = original_invoice_data.get('posting_date')
+            if original_date:
+                if isinstance(original_date, str):
+                    issue_date = etree.SubElement(invoice_doc_ref, "{%s}IssueDate" % self.nsmap['cbc'])
+                    issue_date.text = original_date
+                else:
+                    issue_date = etree.SubElement(invoice_doc_ref, "{%s}IssueDate" % self.nsmap['cbc'])
+                    issue_date.text = original_date.strftime('%Y-%m-%d') if original_date else ""
+            
+            # Add DocumentDescription with original invoice total for JoFotara
+            if original_total:
+                doc_description = etree.SubElement(invoice_doc_ref, "{%s}DocumentDescription" % self.nsmap['cbc'])
+                # Provide only the numeric total to avoid non-numeric characters that break BigDecimal parsing
+                doc_description.text = f"{abs(original_total):.2f}"
+            
+            # Add BillingReferenceLine with original invoice total (as per UBL structure)
+            if original_total:
+                currency = sales_invoice.get('currency', 'JOD')
+                billing_ref_line = etree.SubElement(billing_ref, "{%s}BillingReferenceLine" % self.nsmap['cac'])
+                
+                # Add line ID
+                line_id = etree.SubElement(billing_ref_line, "{%s}ID" % self.nsmap['cbc'])
+                line_id.text = "1"
+                
+                # Add original invoice amount in BillingReferenceLine
+                billed_amount = etree.SubElement(billing_ref_line, "{%s}Amount" % self.nsmap['cbc'])
+                billed_amount.set('currencyID', currency)
+                billed_amount.text = f"{abs(original_total):.2f}"
+            
+        except Exception as e:
+            frappe.log_error(f"Error adding BillingReference for Credit Note: {str(e)}", "UBL XML Generator")
+            frappe.throw(f"Failed to process original invoice reference: {str(e)}")
+    
+    def _add_original_invoice_total_reference(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add AdditionalDocumentReference for original invoice total (JoFotara requirement)."""
+        try:
+            return_against = sales_invoice.get('return_against')
+            if not return_against:
+                return
+            
+            # Get original invoice data
+            validation_result = validate_original_invoice_for_credit_note(return_against)
+            if not validation_result.get('is_valid'):
+                return
+            
+            original_invoice_data = validation_result.get('original_invoice', {})
+            original_total = original_invoice_data.get('grand_total', 0.0)
+            
+            if original_total:
+                # Create AdditionalDocumentReference for original invoice total
+                doc_ref = etree.SubElement(root, "{%s}AdditionalDocumentReference" % self.nsmap['cac'])
+                
+                # Set ID as originalInvoiceTotal
+                ref_id = etree.SubElement(doc_ref, "{%s}ID" % self.nsmap['cbc'])
+                ref_id.text = "originalInvoiceTotal"
+                
+                # Set the total amount as UUID field (JoFotara specific)
+                ref_uuid = etree.SubElement(doc_ref, "{%s}UUID" % self.nsmap['cbc'])
+                ref_uuid.text = f"{abs(original_total):.2f}"
+                
+        except Exception as e:
+            frappe.log_error(f"Error adding original invoice total reference: {str(e)}", "UBL XML Generator")
+            # Don't throw error - continue with standard XML
+            pass
+    
+    def _add_payment_means(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
+        """Add PaymentMeans element for Credit Notes with return reason instruction."""
+        try:
+            # Create PaymentMeans element
+            payment_means = etree.SubElement(root, "{%s}PaymentMeans" % self.nsmap['cac'])
+            
+            # Add PaymentMeansCode for Credit Note/Return
+            payment_means_code = etree.SubElement(payment_means, "{%s}PaymentMeansCode" % self.nsmap['cbc'])
+            payment_means_code.text = "1"  # Standard code for Credit Note returns
+            
+            # Add InstructionNote with return reason
+            # return_reason = sales_invoice.get('terms', '').strip()
+            return_reason = "test test "
+            if not return_reason or len(return_reason) < 5:
+                frappe.throw("Credit Note must have a return reason in the Terms field (minimum 5 characters)")
+            
+            instruction_note = etree.SubElement(payment_means, "{%s}InstructionNote" % self.nsmap['cbc'])
+            instruction_note.text = return_reason[:500]  # Limit to 500 characters for UBL compliance
+            
+        except Exception as e:
+            frappe.log_error(f"Error adding PaymentMeans for Credit Note: {str(e)}", "UBL XML Generator")
+            frappe.throw(f"Failed to add PaymentMeans: {str(e)}")
     
     def _add_issue_time(self, root: etree.Element) -> None:
         """Add IssueTime element."""
@@ -301,13 +456,19 @@ class UBLXMLGenerator:
         """Add TaxTotal element."""
         tax_total = etree.SubElement(root, "{%s}TaxTotal" % self.nsmap['cac'])
         
+        is_return = sales_invoice.get('is_return', 0)
         total_taxes = sales_invoice.get('total_taxes_and_charges') or 0.00
+        net_total = sales_invoice.get('net_total') or 0.00
+        
+        # Convert amounts for Credit Notes (negative to positive)
+        total_taxes = self._convert_amount_for_credit_note(total_taxes, is_return)
+        net_total = self._convert_amount_for_credit_note(net_total, is_return)
+        
         currency = sales_invoice.get('currency', 'JOD')
         etree.SubElement(tax_total, "{%s}TaxAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{total_taxes:.2f}"
         
         # Add tax subtotal
         tax_subtotal = etree.SubElement(tax_total, "{%s}TaxSubtotal" % self.nsmap['cac'])
-        net_total = sales_invoice.get('net_total') or 0.00
         etree.SubElement(tax_subtotal, "{%s}TaxableAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{net_total:.2f}"
         etree.SubElement(tax_subtotal, "{%s}TaxAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{total_taxes:.2f}"
         
@@ -330,10 +491,16 @@ class UBLXMLGenerator:
         """Add LegalMonetaryTotal element."""
         monetary_total = etree.SubElement(root, "{%s}LegalMonetaryTotal" % self.nsmap['cac'])
         
+        is_return = sales_invoice.get('is_return', 0)
         currency = sales_invoice.get('currency', 'JOD')
         net_total = sales_invoice.get('net_total') or 0.00
         grand_total = sales_invoice.get('grand_total') or 0.00
         discount_amount = sales_invoice.get('discount_amount') or 0.00
+        
+        # Convert amounts for Credit Notes (negative to positive)
+        net_total = self._convert_amount_for_credit_note(net_total, is_return)
+        grand_total = self._convert_amount_for_credit_note(grand_total, is_return)
+        discount_amount = self._convert_amount_for_credit_note(discount_amount, is_return)
         
         etree.SubElement(monetary_total, "{%s}TaxExclusiveAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{net_total:.2f}"
         etree.SubElement(monetary_total, "{%s}TaxInclusiveAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{grand_total:.2f}"
@@ -344,6 +511,7 @@ class UBLXMLGenerator:
         """Add InvoiceLine elements for each item."""
         items = sales_invoice.get('items', [])
         currency = sales_invoice.get('currency', 'JOD')
+        is_return = sales_invoice.get('is_return', 0)
         
         for idx, item in enumerate(items, 1):
             invoice_line = etree.SubElement(root, "{%s}InvoiceLine" % self.nsmap['cac'])
@@ -352,9 +520,13 @@ class UBLXMLGenerator:
             
             qty = item.get('qty', 1)
             uom = item.get('uom', 'PCE')
+            # Convert quantity for Credit Notes (negative to positive)
+            qty = self._convert_amount_for_credit_note(qty, is_return)
             etree.SubElement(invoice_line, "{%s}InvoicedQuantity" % self.nsmap['cbc'], unitCode=uom).text = str(qty)
             
             amount = item.get('amount', 0.00)
+            # Convert amount for Credit Notes (negative to positive)
+            amount = self._convert_amount_for_credit_note(amount, is_return)
             etree.SubElement(invoice_line, "{%s}LineExtensionAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{amount:.2f}"
             
             # Tax Total for line item (simplified)
@@ -369,6 +541,8 @@ class UBLXMLGenerator:
             # Price details
             price = etree.SubElement(invoice_line, "{%s}Price" % self.nsmap['cac'])
             rate = item.get('rate', 0.00)
+            # Convert rate for Credit Notes (negative to positive)
+            rate = self._convert_amount_for_credit_note(rate, is_return)
             etree.SubElement(price, "{%s}PriceAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{rate:.2f}"
     
     def validate_xml_schema(self, xml_content: str) -> Dict[str, Any]:
