@@ -146,6 +146,7 @@ override_doctype_class = {
 
 doc_events = {
 	"Sales Invoice": {
+		"before_save": "jofotara_integration.overrides.sales_invoice.before_save",
 		"on_submit": "jofotara_integration.overrides.sales_invoice.on_submit"
 	}
 }

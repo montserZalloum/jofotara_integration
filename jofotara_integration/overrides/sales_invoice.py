@@ -47,3 +47,31 @@ def on_submit(doc, method):
 		)
 
 
+def before_save(doc, method):
+	"""
+	Hook to reset e-invoicing custom fields for Credit Notes.
+	
+	When a Credit Note is created from an original invoice, ERPNext copies 
+	all fields including custom e-invoicing fields. These need to be reset
+	to default values for the new Credit Note.
+	
+	Args:
+		doc (Document): Sales Invoice document
+		method (str): Document event method name
+	"""
+	# Check if this is a Credit Note (is_return = 1)
+	if getattr(doc, 'is_return', 0) == 1:
+		# Reset e-invoicing custom fields to their default values
+		if hasattr(doc, 'custom_einvoice_status'):
+			doc.custom_einvoice_status = "Pending"
+		
+		if hasattr(doc, 'custom_einvoice_qr_code'):
+			doc.custom_einvoice_qr_code = ""
+		
+		## if hasattr(doc, 'custom_einvoice_uuid'):
+		## 	doc.custom_einvoice_uuid = ""
+		## 
+		## if hasattr(doc, 'custom_icv_counter'):
+		## 	doc.custom_icv_counter = None
+
+

@@ -22,6 +22,14 @@ frappe.ui.form.on('Sales Invoice', {
 		
 		// Add enhanced print preview button
 		add_enhanced_print_preview_button(frm);
+		
+		// Control e-invoicing section visibility based on company settings
+		control_einvoicing_section_visibility(frm);
+	},
+	
+	company: function(frm) {
+		// Update e-invoicing section visibility when company changes
+		control_einvoicing_section_visibility(frm);
 	},
 	
 	custom_einvoice_qr_code: function(frm) {
@@ -533,4 +541,52 @@ function validate_qr_code_in_realtime(frm) {
 			}
 		});
 	}
+}
+
+// Control e-invoicing section visibility based on company JoFotara activation
+function control_einvoicing_section_visibility(frm) {
+	if (!frm.doc.company) {
+		return;
+	}
+	
+	// Get company's JoFotara activation status
+	frappe.db.get_value('Company', frm.doc.company, 'jofotara_is_active')
+		.then(r => {
+			const is_jofotara_active = r.message && r.message.jofotara_is_active;
+			const section_field = frm.get_field('custom_einvoicing_compliance');
+			
+			if (!section_field) {
+				return;
+			}
+			
+			// Determine if section should be visible
+			let should_show_section = false;
+			
+			if (is_jofotara_active) {
+				// Always show for active companies
+				should_show_section = true;
+			} else {
+				// For inactive companies, only show if invoice has been submitted to JoFotara
+				// (preserve visibility for submitted invoices)
+				const has_jofotara_data = frm.doc.custom_einvoice_uuid || 
+										  frm.doc.custom_einvoice_status !== 'Pending' ||
+										  frm.doc.custom_einvoice_qr_code;
+				should_show_section = has_jofotara_data;
+			}
+			
+			// Show/hide the section
+			if (should_show_section) {
+				section_field.df.hidden = 0;
+				frm.layout.show_section(section_field.df);
+			} else {
+				section_field.df.hidden = 1;
+				frm.layout.hide_section(section_field.df);
+			}
+			
+			// Refresh layout to apply changes
+			frm.refresh_fields();
+		})
+		.catch(err => {
+			console.error('Error checking company JoFotara status:', err);
+		});
 } 
