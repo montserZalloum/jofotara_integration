@@ -80,7 +80,7 @@ class UBLXMLGenerator:
             self._add_invoice_id(root, sales_invoice)
             self._add_uuid(root, generated_uuid)
             self._add_issue_date(root, sales_invoice)
-            self._add_issue_time(root)
+            self._add_issue_time(root, sales_invoice)
             self._add_invoice_type_code(root, sales_invoice)
             self._add_note(root, sales_invoice)
             self._add_currency_codes(root, sales_invoice)
@@ -341,10 +341,31 @@ class UBLXMLGenerator:
             frappe.log_error(f"Error adding PaymentMeans for Credit Note: {str(e)}", "UBL XML Generator")
             frappe.throw(f"Failed to add PaymentMeans: {str(e)}")
     
-    def _add_issue_time(self, root: etree.Element) -> None:
+    def _add_issue_time(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
         """Add IssueTime element."""
         issue_time = etree.SubElement(root, "{%s}IssueTime" % self.nsmap['cbc'])
-        issue_time.text = "00:00:00"
+        
+        if sales_invoice and sales_invoice.get('posting_time'):
+            # Use actual posting time if available
+            posting_time = sales_invoice.get('posting_time')
+            if isinstance(posting_time, str):
+                issue_time.text = posting_time
+            else:
+                # Handle timedelta object (ERPNext stores time as timedelta)
+                from datetime import timedelta
+                if isinstance(posting_time, timedelta):
+                    # Convert timedelta to HH:MM:SS format
+                    total_seconds = int(posting_time.total_seconds())
+                    hours = total_seconds // 3600
+                    minutes = (total_seconds % 3600) // 60
+                    seconds = total_seconds % 60
+                    issue_time.text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                else:
+                    # For datetime objects
+                    issue_time.text = posting_time.strftime('%H:%M:%S')
+        else:
+            # Fallback to midnight
+            issue_time.text = "00:00:00"
     
     def _add_note(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
         """Add Note element."""
