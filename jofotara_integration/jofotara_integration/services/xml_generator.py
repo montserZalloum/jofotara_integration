@@ -153,6 +153,11 @@ class UBLXMLGenerator:
                 'compatibility_validation': compatibility_result
             }
             
+        except ValueError as e:
+            # Handle user-friendly validation errors (like unsupported currency)
+            error_msg = str(e)
+            frappe.log_error(f"Validation error in XML generation: {error_msg}", "XML Generation Validation")
+            raise ValueError(error_msg)  # Re-raise as ValueError to be handled by caller
         except Exception as e:
             frappe.log_error(f"XML Generation failed: {str(e)}", "UBL XML Generator")
             raise
@@ -717,8 +722,19 @@ class UBLXMLGenerator:
             tax_currency_elem = etree.SubElement(root, "{%s}TaxCurrencyCode" % self.nsmap['cbc'])
             tax_currency_elem.text = tax_currency
             
+        except ValueError as e:
+            # Handle unsupported currency errors gracefully - don't crash XML generation
+            error_msg = str(e)
+            if "not supported by JoFotara" in error_msg:
+                # This is a currency validation error - should have been caught earlier
+                # Create a user-friendly error instead of technical XML error
+                raise ValueError(f"Invoice currency '{invoice_currency}' is not supported by JoFotara. Please change the invoice currency to one of the supported currencies: JOD, USD, EUR, SAR, AED, OMR, GBP, QAR, KWD, BHD, AUD, CAD, JPY, CHF, TRY, SYP, EGP")
+            else:
+                # Other currency processing errors
+                raise ValueError(f"Currency processing error: {error_msg}")
         except Exception as e:
-            frappe.log_error(f"Currency code processing error: {str(e)}", "UBL XML Generator")
+            # For any other unexpected errors, use fallback
+            frappe.log_error(f"Unexpected currency code processing error: {str(e)}", "UBL XML Generator")
             # Fallback to basic currency handling - both currencies must match
             currency_code = invoice_currency or 'JOD'
             

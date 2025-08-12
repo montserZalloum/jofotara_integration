@@ -62,6 +62,22 @@ def validate_buyer_requirements(sales_invoice: Dict[str, Any]) -> Dict[str, Any]
         currency = sales_invoice.get('currency', 'JOD')
         customer_name = sales_invoice.get('customer_name', '').strip()
         
+        # Early currency validation to catch unsupported currencies
+        currency_service = get_multi_currency_service()
+        currency_validation = currency_service.validate_currency_support(currency)
+        if not currency_validation['is_valid']:
+            validation_result['is_valid'] = False
+            # Define the list of supported currencies for clarity
+            supported_currencies_list = "JOD, USD, EUR, SAR, AED, OMR, GBP, QAR, KWD, BHD, AUD, CAD, JPY, CHF, TRY, SYP, EGP"
+
+            # Create a single, user-friendly error message
+            error_message = (
+                f"Unsupported Currency: '{currency}'. "
+                f"Please select one of the currencies supported by JoFotara: {supported_currencies_list}"
+            )
+            validation_result['errors'].append(error_message)
+            return validation_result
+        
         # Determine validation requirements
         requires_buyer_name = _determine_buyer_name_requirement(sales_invoice)
         
@@ -97,23 +113,40 @@ def validate_buyer_requirements(sales_invoice: Dict[str, Any]) -> Dict[str, Any]
                         f"{currency} {grand_total:,.2f} ≈ JOD {jod_equivalent:.2f}"
                     )
             except Exception as e:
-                # Fallback to original logic
-                frappe.log_error(f"Enhanced currency validation failed: {str(e)}", "Buyer Validation")
-                converted_amount = _convert_currency_to_jod(grand_total, currency)
-                if converted_amount >= JOD_THRESHOLD:
-                    validation_result['warnings'].append(
-                        f"High-value invoice ({currency} {grand_total:,.2f} ≈ JOD {converted_amount:,.2f}) "
-                        f"exceeds threshold and may require additional documentation"
-                    )
+                # Don't cascade error logging - just add to validation result
+                validation_result['warnings'].append(
+                    f"Currency validation issue: {str(e)[:80]}..."  # Truncate to avoid cascading
+                )
+                # Try fallback logic without throwing errors
+                try:
+                    converted_amount = _convert_currency_to_jod(grand_total, currency)
+                    if converted_amount >= JOD_THRESHOLD:
+                        validation_result['warnings'].append(
+                            f"High-value invoice may require additional documentation"
+                        )
+                except:
+                    # Silent fallback if even basic conversion fails
+                    pass
         
         return validation_result
         
     except Exception as e:
-        frappe.log_error(f"Error in buyer validation: {str(e)}", "Buyer Validation")
+        # Return user-friendly error without cascading error logs
+        error_msg = str(e)
+        
+        # Check if it's a currency support error
+        if "not supported by JoFotara" in error_msg:
+            return {
+                'is_valid': False,
+                'errors': [f"Unsupported currency. Please use a JoFotara-supported currency."],
+                'warnings': [f"Supported currencies: JOD, USD, EUR, SAR, AED, OMR, GBP, QAR, KWD, BHD, AUD, CAD, JPY, CHF, TRY, SYP, EGP"],
+                'required_fields': []
+            }
+        
         return {
             'is_valid': False,
-            'errors': [f"Validation error: {str(e)}"],
-            'warnings': [],
+            'errors': [f"Validation error occurred. Please check invoice details."],
+            'warnings': [f"Details: {error_msg[:80]}..."],
             'required_fields': []
         }
 
@@ -150,10 +183,14 @@ def _determine_buyer_name_requirement(sales_invoice: Dict[str, Any]) -> bool:
             )
             return threshold_result.get('requires_buyer_validation', False)
         except Exception as e:
-            frappe.log_error(f"Enhanced threshold validation failed, using fallback: {str(e)}", "Buyer Validation")
-            # Fallback to original conversion logic
-            jod_amount = _convert_currency_to_jod(grand_total, currency)
-            return jod_amount >= JOD_THRESHOLD
+            # Don't cascade error logging - use silent fallback
+            try:
+                # Fallback to original conversion logic
+                jod_amount = _convert_currency_to_jod(grand_total, currency)
+                return jod_amount >= JOD_THRESHOLD
+            except:
+                # If all currency conversion fails, be conservative for credit invoices
+                return not is_pos  # Credit always requires validation, cash depends on amount
     
     return False
 
@@ -354,11 +391,25 @@ def validate_enhanced_buyer_requirements(sales_invoice: Dict[str, Any]) -> Dict[
         return validation_result
         
     except Exception as e:
-        frappe.log_error(f"Error in enhanced buyer validation: {str(e)}", "Enhanced Buyer Validation")
+        # Return user-friendly error without cascading error logs
+        error_msg = str(e)
+        
+        # Check if it's a currency support error
+        if "not supported by JoFotara" in error_msg:
+            return {
+                'is_valid': False,
+                'errors': [f"Unsupported currency: {currency}. Please use a JoFotara-supported currency."],
+                'warnings': [f"Supported currencies: {', '.join(sorted(['JOD', 'USD', 'EUR', 'SAR', 'AED', 'OMR', 'GBP', 'QAR', 'KWD', 'BHD', 'AUD', 'CAD', 'JPY', 'CHF', 'TRY', 'SYP', 'EGP']))}"],
+                'required_fields': [],
+                'currency_info': {'original_currency': currency, 'is_supported': False},
+                'threshold_validation': {},
+                'precision_maintained': False
+            }
+        
         return {
             'is_valid': False,
-            'errors': [f"Enhanced validation error: {str(e)}"],
-            'warnings': [],
+            'errors': [f"Validation error occurred. Please check invoice details."],
+            'warnings': [f"Error details: {error_msg[:100]}..."],
             'required_fields': [],
             'currency_info': {},
             'threshold_validation': {},
@@ -644,10 +695,30 @@ def validate_pre_submission(sales_invoice_name: str) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        frappe.log_error(f"Error in pre-submission validation: {str(e)}", "Buyer Validation")
+        # Return user-friendly error without cascading error logs
+        error_msg = str(e)
+        
+        # Check for common error types and provide helpful messages
+        if "not supported by JoFotara" in error_msg:
+            return {
+                'is_valid': False,
+                'errors': [
+                    f"Invoice {sales_invoice_name} uses an unsupported currency.",
+                    "Please change to a JoFotara-supported currency before submission.",
+                    "Supported: JOD, USD, EUR, SAR, AED, OMR, GBP, QAR, KWD, BHD, AUD, CAD, JPY, CHF, TRY, SYP, EGP"
+                ],
+                'warnings': [],
+                'checklist': [],
+                'invoice_name': sales_invoice_name
+            }
+        
         return {
             'is_valid': False,
-            'errors': [f"Pre-submission validation failed: {str(e)}"],
+            'errors': [
+                f"Validation failed for invoice {sales_invoice_name}.",
+                "Please review invoice details and try again.",
+                f"Technical details: {error_msg[:80]}..."
+            ],
             'warnings': [],
             'checklist': [],
             'invoice_name': sales_invoice_name

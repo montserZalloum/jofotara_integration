@@ -110,8 +110,48 @@ def process_invoice_submission(sales_invoice, company):
 		# Validate buyer information requirements (Task 2 & 5)
 		buyer_validation_result = validate_pre_submission(sales_invoice)
 		if not buyer_validation_result['is_valid']:
-			error_messages = '; '.join(buyer_validation_result['errors'])
-			raise Exception(f"Buyer validation failed: {error_messages}")
+			# Handle validation failure gracefully with user-friendly error messages
+			error_messages = buyer_validation_result['errors']
+			
+			# Create a comprehensive error message for the user
+			if len(error_messages) == 1:
+				user_message = error_messages[0]
+			else:
+				user_message = error_messages[0] + "\n\nAdditional details:\n" + "\n".join(f"• {msg}" for msg in error_messages[1:])
+			
+			# Update invoice status with user-friendly message
+			try:
+				frappe.db.set_value("Sales Invoice", sales_invoice, {
+					"custom_einvoice_status": "Validation Failed",
+					"custom_einvoice_error": user_message[:500]  # Limit to 500 chars
+				})
+				frappe.db.commit()
+			except:
+				# If custom_einvoice_error field doesn't exist, use status only
+				frappe.db.set_value("Sales Invoice", sales_invoice, {
+					"custom_einvoice_status": f"Failed: {error_messages[0][:50]}..."
+				})
+				frappe.db.commit()
+			
+			# Log detailed error for admin review
+			frappe.log_error(
+				f"Validation failed for {sales_invoice}:\n\n{user_message}",
+				"Invoice Validation Failed"
+			)
+			
+			# In background job context, publish real-time message to user
+			frappe.publish_realtime(
+				"msgprint",
+				{
+					"message": user_message,
+					"title": "Invoice Validation Failed",
+					"indicator": "red"
+				},
+				user=frappe.session.user
+			)
+			
+			# Return early instead of raising exception
+			return
 		
 		# Log warnings if any - truncate to avoid ERPNext 140-char limit
 		if buyer_validation_result['warnings']:
@@ -143,9 +183,46 @@ def process_invoice_submission(sales_invoice, company):
 		invoice_data["custom_icv_counter"] = icv_counter
 		
 		# Generate XML and get both content and UUID
-		xml_result = xml_generator.generate_xml(invoice_data, icv_counter=icv_counter)
-		xml_content = xml_result['xml_content']
-		generated_uuid = xml_result['uuid']
+		try:
+			xml_result = xml_generator.generate_xml(invoice_data, icv_counter=icv_counter)
+			xml_content = xml_result['xml_content']
+			generated_uuid = xml_result['uuid']
+		except ValueError as e:
+			# Handle user-friendly validation errors (like unsupported currency)
+			error_msg = str(e)
+			
+			# Update invoice status with user-friendly message
+			try:
+				frappe.db.set_value("Sales Invoice", sales_invoice, {
+					"custom_einvoice_status": "Validation Failed",
+					"custom_einvoice_error": error_msg[:500]  # Limit to 500 chars
+				})
+				frappe.db.commit()
+			except:
+				frappe.db.set_value("Sales Invoice", sales_invoice, {
+					"custom_einvoice_status": f"Failed: Currency not supported"
+				})
+				frappe.db.commit()
+			
+			# Log detailed error for admin review
+			frappe.log_error(
+				f"XML generation validation failed for {sales_invoice}:\n\n{error_msg}",
+				"XML Generation Validation Failed"
+			)
+			
+			# In background job context, publish real-time message to user
+			frappe.publish_realtime(
+				"msgprint",
+				{
+					"message": error_msg,
+					"title": "Invoice Submission Failed",
+					"indicator": "red"
+				},
+				user=frappe.session.user
+			)
+			
+			# Return early instead of continuing
+			return
 		
 		# Prepare company config dictionary for API client
 		client_id = company_doc.get("jofotara_client_id")

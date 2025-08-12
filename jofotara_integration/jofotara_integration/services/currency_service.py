@@ -86,7 +86,8 @@ class MultiCurrencyService:
         # Validate currency first
         validation = self.validate_currency_support(invoice_currency)
         if not validation['is_valid']:
-            frappe.throw(validation['error_message'])
+            # Don't throw error - return validation result for caller to handle
+            raise ValueError(validation['error_message'])
         
         document_currency = validation['currency']
         tax_currency = document_currency  # JoFotara requires both to be the same
@@ -115,9 +116,9 @@ class MultiCurrencyService:
         to_validation = self.validate_currency_support(to_currency)
         
         if not from_validation['is_valid']:
-            frappe.throw(from_validation['error_message'])
+            raise ValueError(from_validation['error_message'])
         if not to_validation['is_valid']:
-            frappe.throw(to_validation['error_message'])
+            raise ValueError(to_validation['error_message'])
         
         try:
             # Get exchange rate from ERPNext currency exchange
@@ -134,7 +135,7 @@ class MultiCurrencyService:
                     f"Amount: {amount}. Check Currency Exchange doctype for missing rates.",
                     "Currency Exchange Missing"
                 )
-                frappe.throw(
+                raise ValueError(
                     f"No exchange rate found for {from_validation['currency']} to {to_validation['currency']}"
                 )
             
@@ -143,7 +144,7 @@ class MultiCurrencyService:
             
         except Exception as e:
             frappe.log_error(f"Currency conversion error: {str(e)}", "Multi-Currency Service")
-            frappe.throw(f"Failed to convert {from_currency} to {to_currency}: {str(e)}")
+            raise ValueError(f"Failed to convert {from_currency} to {to_currency}: {str(e)}")
     
     def validate_multi_currency_threshold(self, invoice_amount: Decimal, invoice_currency: str, 
                                         customer_info: Dict[str, Any]) -> Dict[str, Any]:
