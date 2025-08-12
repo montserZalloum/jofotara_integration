@@ -113,10 +113,14 @@ def process_invoice_submission(sales_invoice, company):
 			error_messages = '; '.join(buyer_validation_result['errors'])
 			raise Exception(f"Buyer validation failed: {error_messages}")
 		
-		# Log warnings if any
+		# Log warnings if any - truncate to avoid ERPNext 140-char limit
 		if buyer_validation_result['warnings']:
 			warning_messages = '; '.join(buyer_validation_result['warnings'])
-			frappe.log_error(f"Buyer validation warnings for {sales_invoice}: {warning_messages}", "Buyer Validation Warnings")
+			# Truncate message title to avoid ERPNext field limit
+			truncated_title = f"Buyer warnings: {sales_invoice}"
+			if len(truncated_title) > 130:  # Leave margin for safety
+				truncated_title = f"Buyer warnings: {sales_invoice[:80]}..."
+			frappe.log_error(warning_messages, truncated_title)
 		
 		# Validate Credit Note requirements if applicable
 		if invoice_doc.get('is_return', 0):

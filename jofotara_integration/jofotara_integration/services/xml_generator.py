@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional
 import frappe
 from lxml import etree
 from jofotara_integration.jofotara_integration.utils.validation import validate_original_invoice_for_credit_note
+from jofotara_integration.jofotara_integration.services.currency_service import get_multi_currency_service
 
 
 class UBLXMLGenerator:
@@ -121,6 +122,22 @@ class UBLXMLGenerator:
             # 11. Invoice Lines
             self._add_invoice_lines(root, sales_invoice)
             
+            # Validate invoice type compatibility before finalizing XML
+            compatibility_result = self.validate_invoice_type_compatibility(sales_invoice)
+            if not compatibility_result['is_compatible']:
+                error_messages = '; '.join(compatibility_result['errors'])
+                frappe.log_error(
+                    f"Invoice type compatibility issues for {sales_invoice.get('name')}: {error_messages}",
+                    "UBL XML Generator"
+                )
+                # Log warnings but don't fail XML generation
+                if compatibility_result['warnings']:
+                    warning_messages = '; '.join(compatibility_result['warnings'])
+                    frappe.log_error(
+                        f"Invoice type compatibility warnings for {sales_invoice.get('name')}: {warning_messages}",
+                        "UBL XML Generator Warnings"
+                    )
+            
             # Generate XML string with declaration
             xml_str = etree.tostring(
                 root, 
@@ -131,7 +148,9 @@ class UBLXMLGenerator:
             
             return {
                 'xml_content': xml_str,
-                'uuid': generated_uuid
+                'uuid': generated_uuid,
+                'invoice_type_info': self.determine_invoice_type_code(sales_invoice),
+                'compatibility_validation': compatibility_result
             }
             
         except Exception as e:
@@ -184,10 +203,11 @@ class UBLXMLGenerator:
             is_pos = sales_invoice.get('is_pos', 0)
             payment_method_name = "011" if is_pos else "021"
         else:
-            # New invoice
+            # New invoice - use enhanced 3-digit type code generation
             type_code_elem.text = "388"
-            # Check for Development Area detection
-            payment_method_name = self._get_simple_invoice_type_code(sales_invoice)
+            # Get comprehensive invoice type information
+            type_info = self.determine_invoice_type_code(sales_invoice)
+            payment_method_name = type_info['type_code']
         
         # Add the mandatory 'name' attribute with payment method code
         type_code_elem.set('name', payment_method_name)
@@ -244,10 +264,398 @@ class UBLXMLGenerator:
         is_pos = sales_invoice.get('is_pos', 0)
         payment_digit = "1" if is_pos else "2"  # 1=Cash, 2=Credit
         
-        # Determine payer type (third digit) - default to General Sales for now
-        payer_digit = "2"  # 2=General Sales (can be enhanced later for Income/Special Sales)
+        # Determine payer type (third digit) using enhanced logic
+        payer_digit = self._determine_payer_type(sales_invoice)
         
         return f"{category_digit}{payment_digit}{payer_digit}"
+    
+    def _determine_payer_type(self, sales_invoice: Dict[str, Any]) -> str:
+        """
+        Determine payer type for the third digit of 3-digit invoice type code.
+        
+        Payer Types:
+        - 1: Income invoices (specific business use cases)
+        - 2: General Sales invoices (default for most transactions)
+        - 3: Special Sales invoices (items with special tax rates or categories)
+        
+        Args:
+            sales_invoice: Sales Invoice document data
+            
+        Returns:
+            str: Payer type digit ("1", "2", or "3")
+        """
+        try:
+            # Use currency service to determine special sales eligibility
+            currency_service = get_multi_currency_service()
+            special_sales_result = currency_service.determine_special_sales_eligibility(sales_invoice)
+            
+            if special_sales_result.get('is_special_sales', False):
+                return "3"  # Special Sales
+            
+            # Check for Income type invoices (business-specific logic)
+            if self._is_income_invoice(sales_invoice):
+                return "1"  # Income
+            
+            # Default to General Sales
+            return "2"  # General Sales
+            
+        except Exception as e:
+            frappe.log_error(f"Error determining payer type: {str(e)}", "UBL XML Generator")
+            return "2"  # Default to General Sales on error
+    
+    def _is_income_invoice(self, sales_invoice: Dict[str, Any]) -> bool:
+        """
+        Determine if invoice qualifies as Income type (1st payer digit).
+        
+        Income invoices are typically:
+        - Service-based transactions
+        - Professional fees
+        - Rental income
+        - Custom business rules defined by company
+        
+        Args:
+            sales_invoice: Sales Invoice document data
+            
+        Returns:
+            bool: True if invoice qualifies as Income type
+        """
+        try:
+            # Check if invoice has income-related items or categories
+            items = sales_invoice.get('items', [])
+            
+            for item in items:
+                item_code = item.get('item_code', '')
+                item_group = item.get('item_group', '')
+                
+                # Example business rules for Income classification
+                # These can be customized based on specific business requirements
+                if any(keyword in str(item_code).lower() for keyword in ['service', 'rental', 'fee', 'consultation']):
+                    return True
+                
+                if any(keyword in str(item_group).lower() for keyword in ['services', 'professional', 'income']):
+                    return True
+            
+            # Check invoice-level indicators
+            terms = sales_invoice.get('terms', '')
+            if terms and any(keyword in terms.lower() for keyword in ['service agreement', 'rental', 'professional fee']):
+                return True
+            
+            return False
+            
+        except Exception as e:
+            frappe.log_error(f"Error checking income invoice classification: {str(e)}", "UBL XML Generator")
+            return False
+    
+    def determine_invoice_type_code(self, sales_invoice: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Comprehensive invoice type code determination for all 18 combinations.
+        
+        Returns detailed information about the invoice type classification
+        including the 3-digit code and breakdown of each digit.
+        
+        Args:
+            sales_invoice: Sales Invoice document data
+            
+        Returns:
+            Dict containing:
+            - type_code: str - 3-digit invoice type code
+            - category: str - Invoice category (Local/Export/Development Area)
+            - payment_method: str - Payment method (Cash/Credit)
+            - payer_type: str - Payer type (Income/General Sales/Special Sales)
+            - category_digit: str - First digit
+            - payment_digit: str - Second digit  
+            - payer_digit: str - Third digit
+            - description: str - Human-readable description
+        """
+        try:
+            # Generate the 3-digit code
+            type_code = self._generate_3_digit_invoice_type_code(sales_invoice)
+            
+            # Break down the code
+            category_digit = type_code[0]
+            payment_digit = type_code[1]
+            payer_digit = type_code[2]
+            
+            # Map digits to descriptions
+            category_map = {'0': 'Local', '1': 'Export', '2': 'Development Area'}
+            payment_map = {'1': 'Cash', '2': 'Credit'}
+            payer_map = {'1': 'Income', '2': 'General Sales', '3': 'Special Sales'}
+            
+            category_desc = category_map.get(category_digit, 'Unknown')
+            payment_desc = payment_map.get(payment_digit, 'Unknown')
+            payer_desc = payer_map.get(payer_digit, 'Unknown')
+            
+            description = f"{category_desc} {payment_desc} {payer_desc}"
+            
+            return {
+                'type_code': type_code,
+                'category': category_desc,
+                'payment_method': payment_desc,
+                'payer_type': payer_desc,
+                'category_digit': category_digit,
+                'payment_digit': payment_digit,
+                'payer_digit': payer_digit,
+                'description': description,
+                'is_valid': True,
+                'validation_errors': []
+            }
+            
+        except Exception as e:
+            frappe.log_error(f"Error determining invoice type code: {str(e)}", "UBL XML Generator")
+            return {
+                'type_code': '022',  # Default fallback
+                'category': 'Local',
+                'payment_method': 'Credit',
+                'payer_type': 'General Sales',
+                'category_digit': '0',
+                'payment_digit': '2',
+                'payer_digit': '2',
+                'description': 'Local Credit General Sales (Default)',
+                'is_valid': False,
+                'validation_errors': [f"Error in type code determination: {str(e)}"]
+            }
+    
+    def validate_special_sales_requirements(self, sales_invoice: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate Special Sales invoice requirements for JoFotara compliance.
+        
+        Special Sales invoices (3rd digit = 3) must meet specific criteria:
+        - Have items with special tax rates or exemptions
+        - Proper tax template assignments
+        - Valid tax calculations
+        - Compliance with unique tax scenarios
+        
+        Args:
+            sales_invoice: Sales Invoice document data
+            
+        Returns:
+            Dict containing validation results:
+            - is_valid: bool
+            - errors: List[str] - Validation errors
+            - warnings: List[str] - Validation warnings
+            - special_sales_info: Dict - Information about special sales classification
+        """
+        validation_result = {
+            'is_valid': True,
+            'errors': [],
+            'warnings': [],
+            'special_sales_info': {}
+        }
+        
+        try:
+            # Get invoice type information
+            type_info = self.determine_invoice_type_code(sales_invoice)
+            
+            # Only validate if this is a Special Sales invoice
+            if type_info.get('payer_digit') != '3':
+                validation_result['special_sales_info'] = {
+                    'is_special_sales': False,
+                    'reason': 'Not classified as Special Sales invoice'
+                }
+                return validation_result
+            
+            # Get special sales eligibility details
+            currency_service = get_multi_currency_service()
+            special_sales_result = currency_service.determine_special_sales_eligibility(sales_invoice)
+            
+            validation_result['special_sales_info'] = special_sales_result
+            
+            # Validate that Special Sales classification is justified
+            if not special_sales_result.get('is_special_sales', False):
+                validation_result['is_valid'] = False
+                validation_result['errors'].append(
+                    "Invoice classified as Special Sales but does not meet Special Sales criteria"
+                )
+                return validation_result
+            
+            # Validate special items requirements
+            special_items = special_sales_result.get('special_items', [])
+            if len(special_items) == 0:
+                validation_result['errors'].append(
+                    "Special Sales invoice must contain at least one item with special tax treatment"
+                )
+                validation_result['is_valid'] = False
+            
+            # Validate tax calculations for special items
+            items = sales_invoice.get('items', [])
+            total_special_amount = 0
+            
+            for item in items:
+                item_code = item.get('item_code')
+                
+                # Check if this item is in special_items list
+                is_special_item = any(
+                    special_item.get('item_code') == item_code 
+                    for special_item in special_items
+                )
+                
+                if is_special_item:
+                    # Validate special item tax handling
+                    tax_rate = item.get('rate', 0)
+                    amount = item.get('amount', 0)
+                    total_special_amount += amount
+                    
+                    # Check for proper tax template
+                    item_tax_template = item.get('item_tax_template')
+                    if not item_tax_template:
+                        validation_result['warnings'].append(
+                            f"Special item {item_code} should have a tax template assigned"
+                        )
+                    
+                    # Validate zero-rated items have proper justification
+                    if tax_rate == 0 and not item_tax_template:
+                        validation_result['errors'].append(
+                            f"Zero-rated special item {item_code} must have tax template for compliance"
+                        )
+                        validation_result['is_valid'] = False
+            
+            # Validate that special items constitute significant portion of invoice
+            total_invoice_amount = sales_invoice.get('net_total', 0)
+            if total_invoice_amount > 0:
+                special_percentage = (total_special_amount / total_invoice_amount) * 100
+                if special_percentage < 10:  # Less than 10% special items
+                    validation_result['warnings'].append(
+                        f"Special Sales classification may not be appropriate - only {special_percentage:.1f}% of invoice contains special items"
+                    )
+            
+            # Validate currency compatibility with Special Sales
+            currency = sales_invoice.get('currency', 'JOD')
+            currency_service = get_multi_currency_service()
+            currency_validation = currency_service.validate_currency_support(currency)
+            
+            if not currency_validation['is_valid']:
+                validation_result['errors'].append(
+                    f"Special Sales invoice currency validation failed: {currency_validation['error_message']}"
+                )
+                validation_result['is_valid'] = False
+            
+            # Validate customer information for Special Sales
+            customer_name = sales_invoice.get('customer')
+            if customer_name:
+                try:
+                    customer_doc = frappe.get_doc("Customer", customer_name)
+                    customer_type = customer_doc.get('customer_type')
+                    
+                    # Special Sales typically require proper customer identification
+                    if customer_type == 'Company':
+                        tax_id = customer_doc.get('tax_id')
+                        if not tax_id or tax_id.strip() in ['', 'NA']:
+                            validation_result['warnings'].append(
+                                "Special Sales to companies should have valid tax ID for compliance"
+                            )
+                    
+                except Exception as e:
+                    validation_result['warnings'].append(
+                        f"Could not validate customer information: {str(e)}"
+                    )
+            
+            return validation_result
+            
+        except Exception as e:
+            frappe.log_error(f"Special Sales validation error: {str(e)}", "UBL XML Generator")
+            return {
+                'is_valid': False,
+                'errors': [f"Validation error: {str(e)}"],
+                'warnings': [],
+                'special_sales_info': {'error': str(e)}
+            }
+    
+    def validate_invoice_type_compatibility(self, sales_invoice: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate compatibility between invoice type, customer, and business rules.
+        
+        Ensures that the determined invoice type code is appropriate for:
+        - Customer territory and type
+        - Invoice currency
+        - Item classifications
+        - Business compliance requirements
+        
+        Args:
+            sales_invoice: Sales Invoice document data
+            
+        Returns:
+            Dict containing compatibility validation results
+        """
+        validation_result = {
+            'is_compatible': True,
+            'errors': [],
+            'warnings': [],
+            'recommendations': []
+        }
+        
+        try:
+            # Get comprehensive invoice type information
+            type_info = self.determine_invoice_type_code(sales_invoice)
+            
+            if not type_info.get('is_valid', True):
+                validation_result['errors'].extend(type_info.get('validation_errors', []))
+                validation_result['is_compatible'] = False
+                return validation_result
+            
+            category = type_info.get('category')
+            payer_type = type_info.get('payer_type')
+            currency = sales_invoice.get('currency', 'JOD')
+            
+            # Validate Export invoices
+            if category == 'Export':
+                customer_name = sales_invoice.get('customer')
+                if customer_name:
+                    try:
+                        customer_doc = frappe.get_doc("Customer", customer_name)
+                        territory = customer_doc.get('territory', 'Jordan')
+                        
+                        if territory == 'Jordan':
+                            validation_result['warnings'].append(
+                                "Export invoice type assigned to Jordan customer - verify classification"
+                            )
+                        
+                        # Validate currency for export
+                        if currency == 'JOD' and territory != 'Jordan':
+                            validation_result['recommendations'].append(
+                                f"Consider using {territory} local currency or USD for export to {territory}"
+                            )
+                    except Exception:
+                        validation_result['warnings'].append(
+                            "Could not validate customer territory for Export invoice"
+                        )
+            
+            # Validate Special Sales compatibility
+            if payer_type == 'Special Sales':
+                special_validation = self.validate_special_sales_requirements(sales_invoice)
+                if not special_validation['is_valid']:
+                    validation_result['errors'].extend(special_validation['errors'])
+                    validation_result['is_compatible'] = False
+                
+                validation_result['warnings'].extend(special_validation['warnings'])
+            
+            # Validate Development Area invoices
+            if category == 'Development Area':
+                customer_name = sales_invoice.get('customer')
+                if customer_name:
+                    try:
+                        customer_doc = frappe.get_doc("Customer", customer_name)
+                        is_dev_area = customer_doc.get('custom_is_in_development_area')
+                        
+                        if not is_dev_area:
+                            validation_result['errors'].append(
+                                "Development Area invoice type requires customer to be flagged as in development area"
+                            )
+                            validation_result['is_compatible'] = False
+                    except Exception:
+                        validation_result['warnings'].append(
+                            "Could not validate development area flag for customer"
+                        )
+            
+            return validation_result
+            
+        except Exception as e:
+            frappe.log_error(f"Invoice type compatibility validation error: {str(e)}", "UBL XML Generator")
+            return {
+                'is_compatible': False,
+                'errors': [f"Compatibility validation error: {str(e)}"],
+                'warnings': [],
+                'recommendations': []
+            }
     
     def _determine_invoice_category(self, sales_invoice: Dict[str, Any]) -> str:
         """
@@ -291,14 +699,34 @@ class UBLXMLGenerator:
 
     
     def _add_currency_codes(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
-        """Add DocumentCurrencyCode and TaxCurrencyCode."""
-        currency = sales_invoice.get('currency', 'JOD')
+        """Add DocumentCurrencyCode and TaxCurrencyCode with multi-currency support."""
+        invoice_currency = sales_invoice.get('currency', 'JOD')
         
-        doc_currency = etree.SubElement(root, "{%s}DocumentCurrencyCode" % self.nsmap['cbc'])
-        doc_currency.text = currency
+        # Use multi-currency service to get proper currency codes
+        currency_service = get_multi_currency_service()
         
-        tax_currency = etree.SubElement(root, "{%s}TaxCurrencyCode" % self.nsmap['cbc'])
-        tax_currency.text = currency
+        try:
+            # Get proper document and tax currencies
+            document_currency, tax_currency = currency_service.get_document_and_tax_currencies(invoice_currency)
+            
+            # Add DocumentCurrencyCode (invoice currency)
+            doc_currency = etree.SubElement(root, "{%s}DocumentCurrencyCode" % self.nsmap['cbc'])
+            doc_currency.text = document_currency
+            
+            # Add TaxCurrencyCode (JoFotara requires it to match DocumentCurrencyCode)
+            tax_currency_elem = etree.SubElement(root, "{%s}TaxCurrencyCode" % self.nsmap['cbc'])
+            tax_currency_elem.text = tax_currency
+            
+        except Exception as e:
+            frappe.log_error(f"Currency code processing error: {str(e)}", "UBL XML Generator")
+            # Fallback to basic currency handling - both currencies must match
+            currency_code = invoice_currency or 'JOD'
+            
+            doc_currency = etree.SubElement(root, "{%s}DocumentCurrencyCode" % self.nsmap['cbc'])
+            doc_currency.text = currency_code
+            
+            tax_currency_elem = etree.SubElement(root, "{%s}TaxCurrencyCode" % self.nsmap['cbc'])
+            tax_currency_elem.text = currency_code  # Must match DocumentCurrencyCode
     
     def _add_icv_document_reference(self, root: etree.Element, icv_counter: int) -> None:
         """Add AdditionalDocumentReference container for ICV."""
@@ -644,7 +1072,9 @@ class UBLXMLGenerator:
         
         discount_amount = sales_invoice.get('discount_amount') or 0.00
         currency = sales_invoice.get('currency', 'JOD')
-        etree.SubElement(allowance_charge, "{%s}Amount" % self.nsmap['cbc'], currencyID=currency).text = f"{discount_amount:.2f}"
+        # Round discount amount to 9 decimal places then format for display
+        discount_decimal = Decimal(str(discount_amount)).quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP)
+        etree.SubElement(allowance_charge, "{%s}Amount" % self.nsmap['cbc'], currencyID=currency).text = f"{discount_decimal:.9f}".rstrip('0').rstrip('.')
     
     def _add_tax_total(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
         """Add TaxTotal element."""
@@ -659,12 +1089,17 @@ class UBLXMLGenerator:
         net_total = self._convert_amount_for_credit_note(net_total, is_return)
         
         currency = sales_invoice.get('currency', 'JOD')
-        etree.SubElement(tax_total, "{%s}TaxAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{total_taxes:.2f}"
+        # Apply 9 decimal precision for tax amounts
+        tax_decimal = Decimal(str(total_taxes)).quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP)
+        etree.SubElement(tax_total, "{%s}TaxAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{tax_decimal:.9f}".rstrip('0').rstrip('.')
         
         # Add tax subtotal
         tax_subtotal = etree.SubElement(tax_total, "{%s}TaxSubtotal" % self.nsmap['cac'])
-        etree.SubElement(tax_subtotal, "{%s}TaxableAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{net_total:.2f}"
-        etree.SubElement(tax_subtotal, "{%s}TaxAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{total_taxes:.2f}"
+        # Apply 9 decimal precision for tax subtotal amounts
+        net_decimal = Decimal(str(net_total)).quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP)
+        tax_decimal = Decimal(str(total_taxes)).quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP)
+        etree.SubElement(tax_subtotal, "{%s}TaxableAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{net_decimal:.9f}".rstrip('0').rstrip('.')
+        etree.SubElement(tax_subtotal, "{%s}TaxAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{tax_decimal:.9f}".rstrip('0').rstrip('.')
         
         # Tax Category
         tax_category = etree.SubElement(tax_subtotal, "{%s}TaxCategory" % self.nsmap['cac'])
@@ -696,10 +1131,15 @@ class UBLXMLGenerator:
         grand_total = self._convert_amount_for_credit_note(grand_total, is_return)
         discount_amount = self._convert_amount_for_credit_note(discount_amount, is_return)
         
-        etree.SubElement(monetary_total, "{%s}TaxExclusiveAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{net_total:.2f}"
-        etree.SubElement(monetary_total, "{%s}TaxInclusiveAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{grand_total:.2f}"
-        etree.SubElement(monetary_total, "{%s}AllowanceTotalAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{discount_amount:.2f}"
-        etree.SubElement(monetary_total, "{%s}PayableAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{grand_total:.2f}"
+        # Apply 9 decimal precision for all monetary amounts
+        net_decimal = Decimal(str(net_total)).quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP)
+        grand_decimal = Decimal(str(grand_total)).quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP)
+        discount_decimal = Decimal(str(discount_amount)).quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP)
+        
+        etree.SubElement(monetary_total, "{%s}TaxExclusiveAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{net_decimal:.9f}".rstrip('0').rstrip('.')
+        etree.SubElement(monetary_total, "{%s}TaxInclusiveAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{grand_decimal:.9f}".rstrip('0').rstrip('.')
+        etree.SubElement(monetary_total, "{%s}AllowanceTotalAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{discount_decimal:.9f}".rstrip('0').rstrip('.')
+        etree.SubElement(monetary_total, "{%s}PayableAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{grand_decimal:.9f}".rstrip('0').rstrip('.')
     
     def _add_invoice_lines(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
         """Add InvoiceLine elements for each item."""
@@ -721,7 +1161,9 @@ class UBLXMLGenerator:
             amount = item.get('amount', 0.00)
             # Convert amount for Credit Notes (negative to positive)
             amount = self._convert_amount_for_credit_note(amount, is_return)
-            etree.SubElement(invoice_line, "{%s}LineExtensionAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{amount:.2f}"
+            # Apply 9 decimal precision for line extension amount
+            amount_decimal = Decimal(str(amount)).quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP)
+            etree.SubElement(invoice_line, "{%s}LineExtensionAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{amount_decimal:.9f}".rstrip('0').rstrip('.')
             
             # Tax Total for line item (simplified)
             line_tax_total = etree.SubElement(invoice_line, "{%s}TaxTotal" % self.nsmap['cac'])
@@ -737,7 +1179,9 @@ class UBLXMLGenerator:
             rate = item.get('rate', 0.00)
             # Convert rate for Credit Notes (negative to positive)
             rate = self._convert_amount_for_credit_note(rate, is_return)
-            etree.SubElement(price, "{%s}PriceAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{rate:.2f}"
+            # Apply 9 decimal precision for price amount
+            rate_decimal = Decimal(str(rate)).quantize(Decimal('0.000000001'), rounding=ROUND_HALF_UP)
+            etree.SubElement(price, "{%s}PriceAmount" % self.nsmap['cbc'], currencyID=currency).text = f"{rate_decimal:.9f}".rstrip('0').rstrip('.')
     
     def validate_xml_schema(self, xml_content: str) -> Dict[str, Any]:
         """
