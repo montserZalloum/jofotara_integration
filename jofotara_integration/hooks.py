@@ -291,6 +291,7 @@ custom_fields = {
 
 after_migrate = [
     "jofotara_integration.custom.company.add_custom_fields",
+	"jofotara_integration.custom.customer.add_custom_fields",
     "jofotara_integration.install.after_migrate"
 ]
 # Automatically update python controller files with type annotations for this app.
