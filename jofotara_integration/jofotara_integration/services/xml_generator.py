@@ -171,13 +171,8 @@ class UBLXMLGenerator:
             issue_date.text = posting_date.strftime('%Y-%m-%d') if posting_date else datetime.now().strftime('%Y-%m-%d')
     
     def _add_invoice_type_code(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
-        """Add InvoiceTypeCode with JoFotara compliance based on working reference."""
+        """Add InvoiceTypeCode with Development Area detection using simple 2xx codes."""
         type_code_elem = etree.SubElement(root, "{%s}InvoiceTypeCode" % self.nsmap['cbc'])
-        
-        # Determine payment method name using simple POS logic (matches working implementation)
-        # 011 = Cash/POS transactions, 021 = Credit/non-POS transactions
-        is_pos = sales_invoice.get('is_pos', 0)
-        payment_method_name = "011" if is_pos else "021"
         
         # Determine if this is a return/credit invoice
         is_return = sales_invoice.get('is_return', 0)
@@ -185,12 +180,113 @@ class UBLXMLGenerator:
         if is_return:
             # Return/Credit invoice
             type_code_elem.text = "381"
+            # Use simple 2-digit codes for returns
+            is_pos = sales_invoice.get('is_pos', 0)
+            payment_method_name = "011" if is_pos else "021"
         else:
             # New invoice
             type_code_elem.text = "388"
+            # Check for Development Area detection
+            payment_method_name = self._get_simple_invoice_type_code(sales_invoice)
         
         # Add the mandatory 'name' attribute with payment method code
         type_code_elem.set('name', payment_method_name)
+    
+    def _get_simple_invoice_type_code(self, sales_invoice: Dict[str, Any]) -> str:
+        """
+        Get simple invoice type code with Development Area detection.
+        
+        Returns:
+        - "212": Development Area Credit
+        - "211": Development Area Cash  
+        - "021": Local Credit
+        - "011": Local Cash
+        """
+        try:
+            # Check if customer is in Development Area
+            customer_name = sales_invoice.get('customer')
+            if customer_name:
+                customer_doc = frappe.get_doc("Customer", customer_name)
+                if customer_doc.get('custom_is_in_development_area'):
+                    # Development Area customer - use 2xx codes
+                    is_pos = sales_invoice.get('is_pos', 0)
+                    return "211" if is_pos else "212"
+            
+            # Default Local customer - use 0xx codes  
+            is_pos = sales_invoice.get('is_pos', 0)
+            return "011" if is_pos else "021"
+            
+        except Exception as e:
+            frappe.log_error(f"Error determining simple invoice type: {str(e)}", "UBL XML Generator")
+            # Default to Local codes on error
+            is_pos = sales_invoice.get('is_pos', 0)
+            return "011" if is_pos else "021"
+    
+    def _generate_3_digit_invoice_type_code(self, sales_invoice: Dict[str, Any]) -> str:
+        """
+        Generate 3-digit invoice type code based on invoice characteristics.
+        
+        Code structure: XYZ
+        - X: Invoice Category (0=Local, 1=Export, 2=Development Area)
+        - Y: Payment Method (1=Cash, 2=Credit)
+        - Z: Payer Type (1=Income, 2=General Sales, 3=Special Sales)
+        
+        Args:
+            sales_invoice: Sales Invoice document data
+            
+        Returns:
+            str: 3-digit invoice type code (e.g., "011", "121", "223")
+        """
+        # Determine invoice category (first digit)
+        category_digit = self._determine_invoice_category(sales_invoice)
+        
+        # Determine payment method (second digit)
+        is_pos = sales_invoice.get('is_pos', 0)
+        payment_digit = "1" if is_pos else "2"  # 1=Cash, 2=Credit
+        
+        # Determine payer type (third digit) - default to General Sales for now
+        payer_digit = "2"  # 2=General Sales (can be enhanced later for Income/Special Sales)
+        
+        return f"{category_digit}{payment_digit}{payer_digit}"
+    
+    def _determine_invoice_category(self, sales_invoice: Dict[str, Any]) -> str:
+        """
+        Determine invoice category for the first digit of 3-digit code.
+        
+        Categories:
+        - 0: Local invoices (default)
+        - 1: Export invoices (customer territory != Jordan)
+        - 2: Development Area invoices (customer has custom_is_in_development_area=1)
+        
+        Args:
+            sales_invoice: Sales Invoice document data
+            
+        Returns:
+            str: Category digit ("0", "1", or "2")
+        """
+        try:
+            customer_name = sales_invoice.get('customer')
+            if not customer_name:
+                return "0"  # Default to Local
+            
+            # Get customer document to check territory and development area flag
+            customer_doc = frappe.get_doc("Customer", customer_name)
+            
+            # Check for Development Area first (highest priority)
+            if customer_doc.get('custom_is_in_development_area'):
+                return "2"  # Development Area
+            
+            # Check for Export based on territory
+            customer_territory = customer_doc.get('territory')
+            if customer_territory and customer_territory != 'Jordan':
+                return "1"  # Export
+            
+            # Default to Local
+            return "0"
+            
+        except Exception as e:
+            frappe.log_error(f"Error determining invoice category: {str(e)}", "UBL XML Generator")
+            return "0"  # Default to Local on error
     
 
     
@@ -405,24 +501,20 @@ class UBLXMLGenerator:
         etree.SubElement(party_legal_entity, "{%s}RegistrationName" % self.nsmap['cbc']).text = str(company_name)
     
     def _add_accounting_customer_party(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
-        """Add AccountingCustomerParty element with buyer details."""
+        """Add AccountingCustomerParty element with enhanced buyer details and ID scheme detection."""
         customer_party = etree.SubElement(root, "{%s}AccountingCustomerParty" % self.nsmap['cac'])
         party = etree.SubElement(customer_party, "{%s}Party" % self.nsmap['cac'])
         
-        # Get customer tax ID from Customer doctype
-        customer_name = sales_invoice.get('customer')
-        customer_tax_id = "NA"
-        try:
-            if customer_name:
-                customer_doc = frappe.get_doc("Customer", customer_name)
-                customer_tax_id = customer_doc.get('tax_id') or "NA"
-        except Exception as e:
-            frappe.log_error(f"Error getting customer tax ID: {str(e)}", "UBL XML Generator")
+        # Get enhanced customer information
+        customer_info = self._get_enhanced_customer_info(sales_invoice)
         
-        # Party Identification
+        # Party Identification with enhanced scheme detection
         party_identification = etree.SubElement(party, "{%s}PartyIdentification" % self.nsmap['cac'])
-        id_scheme = "TIN" if customer_tax_id != "NA" else "NAT"
-        etree.SubElement(party_identification, "{%s}ID" % self.nsmap['cbc'], schemeID=id_scheme).text = str(customer_tax_id)
+        etree.SubElement(
+            party_identification, 
+            "{%s}ID" % self.nsmap['cbc'], 
+            schemeID=customer_info['id_scheme']
+        ).text = str(customer_info['tax_id'])
         
         # Postal Address
         postal_address = etree.SubElement(party, "{%s}PostalAddress" % self.nsmap['cac'])
@@ -438,6 +530,87 @@ class UBLXMLGenerator:
         party_legal_entity = etree.SubElement(party, "{%s}PartyLegalEntity" % self.nsmap['cac'])
         customer_name = sales_invoice.get('customer_name') or sales_invoice.get('customer') or "Customer Name"
         etree.SubElement(party_legal_entity, "{%s}RegistrationName" % self.nsmap['cbc']).text = str(customer_name)
+    
+    def _get_enhanced_customer_info(self, sales_invoice: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Get enhanced customer information with proper ID scheme detection.
+        
+        ID Schemes:
+        - TN (Tax Number): For companies with valid tax ID
+        - NIN (National ID): For Jordanian individuals  
+        - PN (Personal No.): For non-Jordanian individuals
+        
+        Note: Using 'TIN' and 'NAT' as XML scheme values for compatibility,
+        but logic follows TN/NIN/PN business rules.
+        
+        Args:
+            sales_invoice: Sales Invoice document data
+            
+        Returns:
+            Dict containing customer info with proper scheme
+        """
+        default_info = {
+            'tax_id': 'NA',
+            'id_scheme': 'NAT',
+            'customer_type': 'Individual',
+            'territory': 'Jordan'
+        }
+        
+        try:
+            customer_name = sales_invoice.get('customer')
+            if not customer_name:
+                return default_info
+            
+            # Get customer document
+            customer_doc = frappe.get_doc("Customer", customer_name)
+            customer_type = customer_doc.get('customer_type', 'Individual')
+            tax_id = customer_doc.get('tax_id', '').strip()
+            territory = customer_doc.get('territory', 'Jordan')
+            
+            # Determine appropriate ID scheme
+            if customer_type == 'Company':
+                # Companies should use TN (Tax Number) scheme
+                if tax_id and tax_id != 'NA':
+                    return {
+                        'tax_id': tax_id,
+                        'id_scheme': 'TIN',  # TN mapped to TIN for XML compatibility
+                        'customer_type': customer_type,
+                        'territory': territory
+                    }
+                else:
+                    # Company without tax ID - validation should catch this
+                    frappe.log_error(
+                        f"Company customer {customer_name} missing tax ID",
+                        "Customer ID Scheme Detection"
+                    )
+                    return {
+                        'tax_id': 'NA',
+                        'id_scheme': 'TIN',  # Still use TIN scheme for companies
+                        'customer_type': customer_type,
+                        'territory': territory
+                    }
+            else:
+                # Individual customers
+                if territory == 'Jordan':
+                    # Jordanian individuals use NIN (National ID) scheme
+                    return {
+                        'tax_id': tax_id or 'NA',
+                        'id_scheme': 'NAT',  # NIN mapped to NAT for XML compatibility
+                        'customer_type': customer_type,
+                        'territory': territory
+                    }
+                else:
+                    # Non-Jordanian individuals use PN (Personal No.) scheme
+                    return {
+                        'tax_id': tax_id or 'NA',
+                        'id_scheme': 'NAT',  # PN mapped to NAT for XML compatibility
+                        'customer_type': customer_type,
+                        'territory': territory
+                    }
+                    
+        except Exception as e:
+            frappe.log_error(f"Error getting enhanced customer info: {str(e)}", "UBL XML Generator")
+            return default_info
     
     def _add_seller_supplier_party(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
         """Add SellerSupplierParty element with Activity Serial Number."""

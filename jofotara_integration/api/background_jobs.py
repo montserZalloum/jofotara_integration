@@ -5,6 +5,7 @@ import json
 from jofotara_integration.jofotara_integration.services.xml_generator import UBLXMLGenerator
 from jofotara_integration.jofotara_integration.services.jofotara_client import JoFotaraClient
 from jofotara_integration.jofotara_integration.utils.jofotara_logger import log_api_submission
+from jofotara_integration.jofotara_integration.utils.buyer_validation import validate_pre_submission
 from jofotara_integration.api.icv_counter import icv_counter_manager
 
 
@@ -105,6 +106,17 @@ def process_invoice_submission(sales_invoice, company):
 		
 		# Get invoice document
 		invoice_doc = frappe.get_doc("Sales Invoice", sales_invoice)
+		
+		# Validate buyer information requirements (Task 2 & 5)
+		buyer_validation_result = validate_pre_submission(sales_invoice)
+		if not buyer_validation_result['is_valid']:
+			error_messages = '; '.join(buyer_validation_result['errors'])
+			raise Exception(f"Buyer validation failed: {error_messages}")
+		
+		# Log warnings if any
+		if buyer_validation_result['warnings']:
+			warning_messages = '; '.join(buyer_validation_result['warnings'])
+			frappe.log_error(f"Buyer validation warnings for {sales_invoice}: {warning_messages}", "Buyer Validation Warnings")
 		
 		# Validate Credit Note requirements if applicable
 		if invoice_doc.get('is_return', 0):

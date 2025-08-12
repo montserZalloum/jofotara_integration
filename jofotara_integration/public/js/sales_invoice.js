@@ -6,6 +6,9 @@ frappe.ui.form.on('Sales Invoice', {
 		// Add JoFotara configuration status indicator (AC: 6)
 		add_company_configuration_status(frm);
 		
+		// Add buyer validation status indicator (Task 6)
+		add_buyer_validation_status(frm);
+		
 		// Add JoFotara submission button for submitted invoices
 		if (frm.doc.docstatus === 1) {
 			add_jofotara_submission_button(frm);
@@ -30,6 +33,28 @@ frappe.ui.form.on('Sales Invoice', {
 	company: function(frm) {
 		// Update e-invoicing section visibility when company changes
 		control_einvoicing_section_visibility(frm);
+		// Refresh buyer validation when company changes
+		add_buyer_validation_status(frm);
+	},
+	
+	customer: function(frm) {
+		// Refresh buyer validation when customer changes
+		add_buyer_validation_status(frm);
+	},
+	
+	customer_name: function(frm) {
+		// Refresh buyer validation when customer name changes
+		add_buyer_validation_status(frm);
+	},
+	
+	grand_total: function(frm) {
+		// Refresh buyer validation when total changes (for threshold checks)
+		add_buyer_validation_status(frm);
+	},
+	
+	is_pos: function(frm) {
+		// Refresh buyer validation when payment method changes
+		add_buyer_validation_status(frm);
 	},
 	
 	custom_einvoice_qr_code: function(frm) {
@@ -69,8 +94,13 @@ function add_jofotara_submission_button(frm) {
 }
 
 function submit_to_jofotara(frm) {
-	// Pre-submission validation
+	// Pre-submission validation including buyer validation
 	if (!validate_submission_requirements(frm)) {
+		return;
+	}
+	
+	// Additional buyer validation check
+	if (!validate_buyer_requirements(frm)) {
 		return;
 	}
 	
@@ -589,4 +619,188 @@ function control_einvoicing_section_visibility(frm) {
 		.catch(err => {
 			console.error('Error checking company JoFotara status:', err);
 		});
+}
+
+// Buyer Validation Functions (Task 6)
+function add_buyer_validation_status(frm) {
+	// Remove existing validation status
+	remove_buyer_validation_status(frm);
+	
+	if (frm.doc.company && (frm.doc.customer || frm.doc.grand_total)) {
+		// Perform buyer validation check
+		perform_buyer_validation_check(frm);
+	}
+}
+
+function remove_buyer_validation_status(frm) {
+	const existing_status = document.getElementById('buyer-validation-status');
+	if (existing_status) {
+		existing_status.remove();
+	}
+}
+
+function perform_buyer_validation_check(frm) {
+	// Client-side buyer validation logic
+	const validation_result = validate_buyer_requirements_client(frm);
+	
+	if (validation_result.show_status) {
+		create_buyer_validation_display(frm, validation_result);
+	}
+}
+
+function validate_buyer_requirements_client(frm) {
+	const is_pos = frm.doc.is_pos || 0;
+	const grand_total = frm.doc.grand_total || 0;
+	const currency = frm.doc.currency || 'JOD';
+	const customer_name = (frm.doc.customer_name || '').trim();
+	
+	let validation_result = {
+		show_status: false,
+		is_valid: true,
+		status_text: '',
+		status_color: '#4CAF50',
+		status_icon: 'fa-check-circle',
+		requirements: [],
+		errors: [],
+		warnings: []
+	};
+	
+	// Determine if buyer name is required
+	let requires_buyer_name = false;
+	let requirement_reason = '';
+	
+	if (!is_pos) {
+		// Credit invoices always require buyer name
+		requires_buyer_name = true;
+		requirement_reason = __('Credit invoices require buyer name');
+	} else if (is_pos && grand_total >= 10000) {
+		// High-value cash invoices require buyer name
+		requires_buyer_name = true;
+		if (currency === 'JOD') {
+			requirement_reason = __('Cash invoices ≥ JOD 10,000 require buyer name');
+		} else {
+			requirement_reason = __('High-value cash invoices require buyer name (≥ JOD 10,000 equivalent)');
+		}
+	}
+	
+	if (requires_buyer_name) {
+		validation_result.show_status = true;
+		validation_result.requirements.push(requirement_reason);
+		
+		if (!customer_name || customer_name.length < 2) {
+			validation_result.is_valid = false;
+			validation_result.status_text = __('Buyer Name Required');
+			validation_result.status_color = '#f44336';
+			validation_result.status_icon = 'fa-exclamation-triangle';
+			validation_result.errors.push(__('Please enter customer name (minimum 2 characters)'));
+		} else {
+			validation_result.status_text = __('Buyer Validation Passed');
+			validation_result.status_color = '#4CAF50';
+			validation_result.status_icon = 'fa-check-circle';
+		}
+	}
+	
+	// Add warnings for edge cases
+	if (currency !== 'JOD' && grand_total >= 10000) {
+		validation_result.warnings.push(__('High-value invoice in {0} may require additional documentation', [currency]));
+	}
+	
+	return validation_result;
+}
+
+function create_buyer_validation_display(frm, validation_result) {
+	// Find the customer field to insert status after
+	const customer_field = frm.get_field('customer_name') || frm.get_field('customer');
+	if (!customer_field || !customer_field.$wrapper) {
+		return;
+	}
+	
+	let content_html = `
+		<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+			<i class="fa ${validation_result.status_icon}" style="color: ${validation_result.status_color}; font-size: 16px;"></i>
+			<strong style="color: ${validation_result.status_color};">${validation_result.status_text}</strong>
+		</div>
+	`;
+	
+	// Add requirements
+	if (validation_result.requirements.length > 0) {
+		content_html += `
+			<div style="margin-bottom: 8px; font-size: 12px; color: #666;">
+				<strong>${__('Requirements:')}</strong>
+				<ul style="margin: 5px 0; padding-left: 20px;">
+					${validation_result.requirements.map(req => `<li>${req}</li>`).join('')}
+				</ul>
+			</div>
+		`;
+	}
+	
+	// Add errors
+	if (validation_result.errors.length > 0) {
+		content_html += `
+			<div style="margin-bottom: 8px; font-size: 12px; color: #f44336;">
+				<strong>${__('Issues:')}</strong>
+				<ul style="margin: 5px 0; padding-left: 20px;">
+					${validation_result.errors.map(error => `<li>${error}</li>`).join('')}
+				</ul>
+			</div>
+		`;
+	}
+	
+	// Add warnings
+	if (validation_result.warnings.length > 0) {
+		content_html += `
+			<div style="margin-bottom: 8px; font-size: 12px; color: #ff9800;">
+				<strong>${__('Warnings:')}</strong>
+				<ul style="margin: 5px 0; padding-left: 20px;">
+					${validation_result.warnings.map(warning => `<li>${warning}</li>`).join('')}
+				</ul>
+			</div>
+		`;
+	}
+	
+	const validation_html = `
+		<div id="buyer-validation-status" style="margin-top: 10px; padding: 10px; background-color: #f5f5f5; border-radius: 4px; border-left: 4px solid ${validation_result.status_color};">
+			${content_html}
+		</div>
+	`;
+	
+	customer_field.$wrapper.after(validation_html);
+}
+
+function validate_buyer_requirements(frm) {
+	// Client-side validation before submission
+	const validation_result = validate_buyer_requirements_client(frm);
+	
+	if (!validation_result.is_valid) {
+		frappe.msgprint({
+			title: __('Buyer Validation Failed'),
+			message: validation_result.errors.join('<br>'),
+			indicator: 'red'
+		});
+		return false;
+	}
+	
+	// Show warning dialog for high-value invoices
+	if (validation_result.warnings.length > 0) {
+		return new Promise((resolve) => {
+			frappe.confirm(
+				__('Validation Warnings:<br>{0}<br><br>Continue with submission?', [validation_result.warnings.join('<br>')]),
+				() => resolve(true),
+				() => resolve(false)
+			);
+		});
+	}
+	
+	return true;
+}
+
+// Export invoice type detection (for display purposes)
+function get_invoice_type_display(frm) {
+	if (!frm.doc.customer) {
+		return __('Local Invoice');
+	}
+	
+	// This would need to be enhanced to check customer territory and development area
+	// For now, just show Local as default
+	return __('Local Invoice');
 } 
