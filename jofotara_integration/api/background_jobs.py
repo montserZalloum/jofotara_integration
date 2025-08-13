@@ -275,19 +275,51 @@ def process_invoice_submission(sales_invoice, company):
 				'custom_einvoice_uuid': generated_uuid  # Use the generated UUID from XML, not response
 			}
 			
-			# Store QR code if present in response
+			# Two-step QR processing: Store initial JoFotara QR, then generate enhanced QR
+			qr_processed = False
 			if response.get('qr_code'):
-				update_data['custom_einvoice_qr_code'] = response.get('qr_code')
+				try:
+					# Step 1: Store initial JoFotara QR response in custom_invoice_qr_code image field
+					initial_qr_data = response.get('qr_code')
+					update_data['custom_invoice_qr_code'] = initial_qr_data
+					
+					# Step 2: Generate enhanced QR code using QR generation service
+					from jofotara_integration.jofotara_integration.services.qr_code_generator import generate_qr_from_base64_string
+					enhanced_qr_image = generate_qr_from_base64_string(initial_qr_data)
+					
+					# Step 3: Update custom_invoice_qr_code field with generated QR after successful generation
+					update_data['custom_invoice_qr_code'] = enhanced_qr_image
+					qr_processed = True
+					
+					
+					
+				except Exception as qr_error:
+					# QR generation failure - implement fallback logic to retain original QR
+					frappe.log_error(
+						f"QR code generation failed for invoice {sales_invoice}: {str(qr_error)}. Retaining original JoFotara QR data.",
+						"QR Code Generation Failed"
+					)
+					
+					# Fallback: Keep the original JoFotara QR data in the field
+					update_data['custom_invoice_qr_code'] = initial_qr_data
+					qr_processed = True  # Still mark as processed since we have fallback QR
 			
 			frappe.db.set_value('Sales Invoice', sales_invoice, update_data)
 			frappe.db.commit()
 			
-			# Send success notification
-			notification_message = _("Credit Note successfully submitted to JoFotara") if is_credit_note else _("Invoice successfully submitted to JoFotara")
+			# Send success notification with QR processing status
+			base_message = _("Credit Note successfully submitted to JoFotara") if is_credit_note else _("Invoice successfully submitted to JoFotara")
+			
+			if qr_processed:
+				notification_message = f"{base_message} with QR code generated"
+			else:
+				notification_message = f"{base_message} (QR code not available)"
+			
 			_send_completion_notification(sales_invoice, 'success', {
 				'status': 'Accepted',
 				'uuid': generated_uuid,  # Use the generated UUID from XML, not response
-				'message': notification_message
+				'message': notification_message,
+				'qr_processed': qr_processed
 			})
 		else:
 			# API call failed, raise exception to trigger error handling

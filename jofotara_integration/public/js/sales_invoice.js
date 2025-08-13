@@ -57,7 +57,7 @@ frappe.ui.form.on('Sales Invoice', {
 		add_buyer_validation_status(frm);
 	},
 	
-	custom_einvoice_qr_code: function(frm) {
+	custom_invoice_qr_code: function(frm) {
 		// Real-time QR code display when field is updated
 		add_qr_code_preview(frm);
 	}
@@ -299,7 +299,7 @@ function update_status_indicator(frm, status) {
 
 // QR Code Preview Functionality
 function add_qr_code_preview(frm) {
-	const qr_code_data = frm.doc.custom_einvoice_qr_code;
+	const qr_code_data = frm.doc.custom_invoice_qr_code;
 	const status = frm.doc.custom_einvoice_status;
 	
 	// Remove existing QR code preview
@@ -315,10 +315,14 @@ function validate_qr_code_data(qr_data) {
 		return false;
 	}
 	
-	// Basic validation for base64 format
+	// Enhanced validation for image field format (data URI or direct image data)
 	try {
-		const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
-		return base64Pattern.test(qr_data);
+		// Check if it's a data URI (preferred format from QR generator)
+		const isDataUri = qr_data.startsWith('data:image/');
+		// Also support raw base64 for backward compatibility
+		const isBase64 = /^[A-Za-z0-9+/]*={0,2}$/.test(qr_data);
+		
+		return isDataUri || isBase64;
 	} catch (error) {
 		console.error('Error validating QR code data:', error);
 		return false;
@@ -327,9 +331,16 @@ function validate_qr_code_data(qr_data) {
 
 function create_qr_code_preview_section(frm, qr_data, status) {
 	// Find a good place to insert the QR code preview
-	const target_field = frm.get_field('custom_einvoice_qr_code') || frm.get_field('custom_einvoice_status');
+	const target_field = frm.get_field('custom_invoice_qr_code') || frm.get_field('custom_einvoice_status');
 	if (!target_field || !target_field.$wrapper) {
 		return;
+	}
+	
+	// Prepare image src - handle both data URI and raw base64 formats
+	let image_src = qr_data;
+	if (!qr_data.startsWith('data:image/')) {
+		// Assume raw base64 and add data URI prefix
+		image_src = `data:image/png;base64,${qr_data}`;
 	}
 	
 	// Create QR code preview HTML
@@ -341,7 +352,7 @@ function create_qr_code_preview_section(frm, qr_data, status) {
 			<div style="display: flex; align-items: flex-start; gap: 15px;">
 				<div style="text-align: center;">
 					<img id="qr-preview-image" 
-						 src="data:image/png;base64,${qr_data}" 
+						 src="${image_src}" 
 						 alt="E-Invoice QR Code" 
 						 style="max-width: 120px; max-height: 120px; border: 1px solid #ddd; border-radius: 3px;">
 					<p style="font-size: 11px; margin-top: 5px; color: #666;">Scan for Verification</p>
@@ -395,7 +406,7 @@ function getStatusColor(status) {
 // Enhanced Print Preview Functionality
 function add_enhanced_print_preview_button(frm) {
 	// Only add for submitted invoices or those with QR codes
-	if (frm.doc.docstatus === 1 || frm.doc.custom_einvoice_qr_code) {
+	if (frm.doc.docstatus === 1 || frm.doc.custom_invoice_qr_code) {
 		frm.add_custom_button(__('Print with QR Code'), function() {
 			open_qr_print_preview(frm);
 		}, __('Print'));
@@ -555,7 +566,7 @@ function remove_configuration_status(frm) {
 
 // Real-time QR code validation
 function validate_qr_code_in_realtime(frm) {
-	const qr_field = frm.get_field('custom_einvoice_qr_code');
+	const qr_field = frm.get_field('custom_invoice_qr_code');
 	if (qr_field) {
 		qr_field.$input.on('input', function() {
 			const qr_data = $(this).val();
@@ -600,7 +611,7 @@ function control_einvoicing_section_visibility(frm) {
 				// (preserve visibility for submitted invoices)
 				const has_jofotara_data = frm.doc.custom_einvoice_uuid || 
 										  frm.doc.custom_einvoice_status !== 'Pending' ||
-										  frm.doc.custom_einvoice_qr_code;
+										  frm.doc.custom_invoice_qr_code;
 				should_show_section = has_jofotara_data;
 			}
 			

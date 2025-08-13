@@ -137,7 +137,7 @@ def get_submission_status(sales_invoice_name):
 			"invoice": sales_invoice_name,
 			"einvoice_status": invoice.get("custom_einvoice_status", "Pending"),
 			"einvoice_uuid": invoice.get("custom_einvoice_uuid"),
-			"qr_code": invoice.get("custom_einvoice_qr_code_text"),
+			"qr_code": invoice.get("custom_einvoice_qr_code"),
 			"has_active_job": len(active_jobs) > 0,
 			"active_jobs": active_jobs
 		}

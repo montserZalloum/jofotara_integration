@@ -3,16 +3,18 @@ frappe.ready(function() {
 	
 	// Validate and process QR code data
 	function validateQRCodeData(doc) {
-		if (!doc.custom_einvoice_qr_code) {
+		if (!doc.custom_invoice_qr_code) {
 			return false;
 		}
 		
-		// Basic validation for base64 format
+		// Basic validation for image field format (data URI or direct image data)
 		try {
-			// Check if it's valid base64
-			const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
-			if (!base64Pattern.test(doc.custom_einvoice_qr_code)) {
-				console.warn('Invalid base64 QR code format');
+			// Check if it's a data URI or image field content
+			const isDataUri = doc.custom_invoice_qr_code.startsWith('data:image/');
+			const isBase64 = /^[A-Za-z0-9+/]*={0,2}$/.test(doc.custom_invoice_qr_code);
+			
+			if (!isDataUri && !isBase64) {
+				console.warn('Invalid QR code image format');
 				return false;
 			}
 			return true;
@@ -66,7 +68,7 @@ frappe.ready(function() {
 	
 	// Initialize QR code functionality
 	function initializeQRCode(doc) {
-		if (doc && doc.custom_einvoice_qr_code) {
+		if (doc && doc.custom_invoice_qr_code) {
 			// Validate QR code data
 			if (validateQRCodeData(doc)) {
 				// Setup error handling

@@ -278,11 +278,20 @@ custom_fields = {
 			"in_list_view": 0
 		},
 		{
+			"fieldname": "custom_invoice_qr_code",
+			"label": "E-Invoice QR Code Image",
+			"fieldtype": "Image",
+			"read_only": 1,
+			"insert_after": "custom_einvoice_qr_code",
+			"allow_on_submit": 1,
+			"in_list_view": 0
+		},
+		{
 			"fieldname": "icv_counter",
 			"label": "ICV Counter",
 			"fieldtype": "Int",
 			"read_only": 1,
-			"insert_after": "custom_einvoice_qr_code",
+			"insert_after": "custom_invoice_qr_code",
 			"allow_on_submit": 1,
 			"in_list_view": 0
 		}
