@@ -61,11 +61,20 @@ def add_custom_fields():
                 "default": 0,
                 "description": "Enable auto submission to JoFotara"
             },
+             {
+                "fieldname": "company_registration_type",
+                "label": "Company Registration Type",
+                "fieldtype": "Select",
+                "insert_after": "jofotara_auto_submit",
+                "depends_on": "jofotara_is_active",
+                "options": "Unregistered in the sales tax\nRegistered in the sales tax\nRegistered in the special sales tax",
+                "default": "Unregistered in the sales tax"
+            },
             {
                 "fieldname": "current_icv_counter",
                 "label": "Current ICV Counter",
                 "fieldtype": "Int",
-                "insert_after": "jofotara_auto_submit",
+                "insert_after": "company_registration_type",
                 "depends_on": "jofotara_is_active",
                 "read_only": 1,
                 "default": 0,
