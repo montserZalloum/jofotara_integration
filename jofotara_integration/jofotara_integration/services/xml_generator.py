@@ -195,18 +195,16 @@ class UBLXMLGenerator:
             issue_date.text = posting_date.strftime('%Y-%m-%d') if posting_date else datetime.now().strftime('%Y-%m-%d')
     
     def _add_invoice_type_code(self, root: etree.Element, sales_invoice: Dict[str, Any]) -> None:
-        """Add InvoiceTypeCode with Development Area detection using simple 2xx codes."""
+        """Add InvoiceTypeCode with proper Credit Note handling per JoFotara specification."""
         type_code_elem = etree.SubElement(root, "{%s}InvoiceTypeCode" % self.nsmap['cbc'])
         
         # Determine if this is a return/credit invoice
         is_return = sales_invoice.get('is_return', 0)
         
         if is_return:
-            # Return/Credit invoice
+            # Credit Note: InvoiceTypeCode = 381, but name attribute must match original invoice type
             type_code_elem.text = "381"
-            # Use simple 2-digit codes for returns
-            is_pos = sales_invoice.get('is_pos', 0)
-            payment_method_name = "011" if is_pos else "021"
+            payment_method_name = self._get_original_invoice_type_code(sales_invoice)
         else:
             # New invoice - use enhanced 3-digit type code generation
             type_code_elem.text = "388"
@@ -216,6 +214,51 @@ class UBLXMLGenerator:
         
         # Add the mandatory 'name' attribute with payment method code
         type_code_elem.set('name', payment_method_name)
+    
+    def _get_original_invoice_type_code(self, sales_invoice: Dict[str, Any]) -> str:
+        """
+        Get the 3-digit type code from the original invoice for Credit Note compatibility.
+        
+        According to JoFotara specification, Credit Notes must use the same type code
+        in the name attribute as the original invoice to maintain type compatibility.
+        
+        Args:
+            sales_invoice: Credit Note sales invoice data
+            
+        Returns:
+            str: 3-digit type code from original invoice (e.g., "022", "011", etc.)
+        """
+        try:
+            return_against = sales_invoice.get('return_against')
+            if not return_against:
+                frappe.throw("Credit Note must reference an original invoice in return_against field")
+            
+            # Validate original invoice using existing utility
+            validation_result = validate_original_invoice_for_credit_note(return_against)
+            if not validation_result.get('is_valid'):
+                error_message = validation_result.get('error_message', 'Original invoice validation failed')
+                frappe.throw(error_message)
+            
+            # Get original invoice data
+            original_invoice_data = validation_result.get('original_invoice', {})
+            
+            # Try to get the type code from the original invoice's custom field if available
+            original_type_code = original_invoice_data.get('custom_invoice_type_code')
+            if original_type_code:
+                return original_type_code
+            
+            # If not available, determine the type code based on original invoice characteristics
+            # This ensures backward compatibility with invoices that don't have the type code stored
+            original_type_info = self.determine_invoice_type_code(original_invoice_data)
+            return original_type_info.get('type_code', '022')  # Fallback to Local Credit General Sales
+            
+        except Exception as e:
+            frappe.log_error(
+                f"Error getting original invoice type code for Credit Note: {str(e)}", 
+                "UBL XML Generator"
+            )
+            # Return a safe default that works for most cases
+            return "022"  # Local Credit General Sales - most common scenario
     
     def _get_simple_invoice_type_code(self, sales_invoice: Dict[str, Any]) -> str:
         """
