@@ -21,6 +21,16 @@ def add_custom_fields():
                 "options": "",
                 "reqd": 0,
                 "default": ""
+            },
+            {
+                "fieldname": "jofotara_payer_type",
+                "label": "Jofotara Payer Type",
+                "fieldtype": "Data",
+                "insert_after": "custom_icv_counter",
+                "read_only": 1,
+                "no_copy": 1,
+                "description": "This field will be populated automatically with '1', '2', or '3'.",
+                "default": ""
             }
         ]
     }

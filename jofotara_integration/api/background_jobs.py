@@ -257,7 +257,7 @@ def process_invoice_submission(sales_invoice, company):
 			'company': invoice_doc.company,
 			'invoice_type': 'Credit Note' if is_credit_note else 'Regular Invoice',
 			'return_against': invoice_doc.get('return_against') if is_credit_note else None,
-            'xml_length': len(xml_content),
+            'xml_content': xml_content,
             'icv_value': icv_counter
 		}
 		

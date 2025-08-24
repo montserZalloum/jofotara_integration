@@ -321,18 +321,50 @@ class UBLXMLGenerator:
         """
         Determine payer type for the third digit of 3-digit invoice type code.
         
+        This method integrates with the new Payer Type logic implemented in Story 4.6.
+        It uses the automatically calculated jofotara_payer_type field as the primary source,
+        with fallback to legacy logic for backward compatibility.
+        
+        Primary source: jofotara_payer_type field (automatically calculated by Sales Invoice validation)
+        Fallback: Legacy logic using currency service and income invoice detection
+        
         Payer Types:
-        - 1: Income invoices (specific business use cases)
-        - 2: General Sales invoices (default for most transactions)
-        - 3: Special Sales invoices (items with special tax rates or categories)
+        - 1: Non-registered company (Income invoices)
+        - 2: Registered company with general items (General Sales invoices)
+        - 3: Registered company with special items (Special Sales invoices)
+        
+        The method handles logging errors gracefully to ensure it works in both
+        production and test environments.
         
         Args:
             sales_invoice: Sales Invoice document data
             
         Returns:
             str: Payer type digit ("1", "2", or "3")
+            
+        Raises:
+            Exception: Logged and handled internally, method returns default value "2"
         """
         try:
+            # Primary source: Use jofotara_payer_type field if available
+            jofotara_payer_type = sales_invoice.get('jofotara_payer_type')
+            
+            if jofotara_payer_type and jofotara_payer_type in ['1', '2', '3']:
+                try:
+                    frappe.logger().debug(f"Using jofotara_payer_type field: {jofotara_payer_type}")
+                except:
+                    pass  # Ignore logging errors in test environments
+                return jofotara_payer_type
+            
+            # Fallback to legacy logic for backward compatibility
+            try:
+                frappe.logger().warning(
+                    f"jofotara_payer_type field not available or invalid ({jofotara_payer_type}), "
+                    f"using fallback logic for invoice {sales_invoice.get('name', 'Unknown')}"
+                )
+            except:
+                pass  # Ignore logging errors in test environments
+            
             # Use currency service to determine special sales eligibility
             currency_service = get_multi_currency_service()
             special_sales_result = currency_service.determine_special_sales_eligibility(sales_invoice)

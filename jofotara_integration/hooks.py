@@ -146,6 +146,7 @@ override_doctype_class = {
 
 doc_events = {
 	"Sales Invoice": {
+		"validate": "jofotara_integration.overrides.sales_invoice.validate",
 		"before_save": "jofotara_integration.overrides.sales_invoice.before_save",
 		"on_submit": "jofotara_integration.overrides.sales_invoice.on_submit"
 	}
@@ -300,6 +301,7 @@ custom_fields = {
 
 after_migrate = [
     "jofotara_integration.custom.company.add_custom_fields",
+    "jofotara_integration.custom.item_tax_template.add_custom_fields",
 	"jofotara_integration.custom.customer.add_custom_fields",
     "jofotara_integration.install.after_migrate"
 ]

@@ -814,4 +814,72 @@ function get_invoice_type_display(frm) {
 	// This would need to be enhanced to check customer territory and development area
 	// For now, just show Local as default
 	return __('Local Invoice');
-} 
+}
+
+// Enhanced validation for unregistered companies with special tax items
+function validate_unregistered_company_special_items(frm) {
+	// Only validate if company is set
+	if (!frm.doc.company) {
+		return;
+	}
+	
+	// Check if any items have special tax templates
+	const special_items = [];
+	
+	frm.doc.items.forEach(item => {
+		if (item.item_tax_template) {
+			// We'll need to check this via server call since we can't access doctype fields directly
+			// For now, we'll rely on the server-side validation
+		}
+	});
+	
+	// Real-time validation will be handled by server-side validation on save
+	// This function provides visual feedback for items with special tax templates
+	highlight_special_tax_items(frm);
+}
+
+function highlight_special_tax_items(frm) {
+	// Remove existing highlights
+	frm.doc.items.forEach(item => {
+		const item_row = frm.get_field('items').grid.grid_rows_by_docname[item.name];
+		if (item_row) {
+			item_row.$wrapper.removeClass('special-tax-item-warning');
+		}
+	});
+	
+	// Add highlights for items with special tax templates
+	frm.doc.items.forEach(item => {
+		if (item.item_tax_template) {
+			// Check if this is a special tax template via server call
+			frappe.call({
+				method: 'jofotara_integration.jofotara_integration.services.validation_service.is_special_tax_template',
+				args: {
+					tax_template: item.item_tax_template
+				},
+				callback: function(r) {
+					if (r.message && r.message.is_special) {
+						const item_row = frm.get_field('items').grid.grid_rows_by_docname[item.name];
+						if (item_row) {
+							item_row.$wrapper.addClass('special-tax-item-warning');
+							item_row.$wrapper.css('background-color', '#fff3cd');
+							item_row.$wrapper.css('border-left', '4px solid #ffc107');
+						}
+					}
+				}
+			});
+		}
+	});
+}
+
+// Add real-time validation to item changes
+frappe.ui.form.on('Sales Invoice Item', {
+	item_tax_template: function(frm, cdt, cdn) {
+		// Validate when tax template changes
+		validate_unregistered_company_special_items(frm);
+	},
+	
+	item_code: function(frm, cdt, cdn) {
+		// Validate when item changes
+		validate_unregistered_company_special_items(frm);
+	}
+}); 

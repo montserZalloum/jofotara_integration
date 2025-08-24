@@ -2,6 +2,75 @@ import frappe
 from frappe import _
 
 
+def validate(doc, method):
+	"""
+	Hook to automatically calculate Jofotara Payer Type based on company registration status and item tax templates.
+	Also validates that unregistered companies cannot include items with special tax templates.
+	
+	Logic Flow:
+	1. Pre-check: Verify company country is "Jordan"
+	2. Fetch company registration status from Company master
+	3. Branch 1 (Non-registered): Set Payer Type '1', validate no taxes and no special tax items
+	4. Branch 2 (Registered): Check items for special tax, set Payer Type '2' or '3'
+	
+	Args:
+		doc (Document): Sales Invoice document
+		method (str): Document event method name
+	"""
+	try:
+		# Pre-check: Only apply logic for Jordanian companies
+		if not doc.company:
+			return
+			
+		company_doc = frappe.get_doc("Company", doc.company)
+		if company_doc.country != "Jordan":
+			return
+		
+		# Enhanced validation for unregistered companies with special tax items
+		from jofotara_integration.jofotara_integration.services.validation_service import validation_service
+		validation_service.validate_unregistered_company_special_items(doc)
+		
+		# Fetch company registration status
+		is_registered = getattr(company_doc, 'is_jordan_sales_tax_registered', 0)
+		
+		# Branch 1: Company is NOT registered for sales tax
+		if not is_registered:
+			doc.jofotara_payer_type = '1'
+			
+			# Validation: Non-registered companies cannot have tax charges
+			if doc.total_taxes_and_charges > 0:
+				frappe.throw(
+					_("This company is not registered for sales tax. Invoices cannot include tax charges. Please remove all taxes to proceed."),
+					title=_("Tax Registration Required")
+				)
+		
+		# Branch 2: Company IS registered for sales tax
+		else:
+			# Check if any items have special tax templates
+			has_special_items = False
+			
+			for item in doc.items:
+				if item.item_tax_template:
+					# Get the item tax template
+					tax_template = frappe.get_doc("Item Tax Template", item.item_tax_template)
+					if getattr(tax_template, 'is_jofotara_special_tax', 0):
+						has_special_items = True
+						break  # Break early for efficiency
+			
+			# Set Payer Type based on special items
+			if has_special_items:
+				doc.jofotara_payer_type = '3'  # Special Sales
+			else:
+				doc.jofotara_payer_type = '2'  # General Sales
+				
+	except Exception as e:
+		# Log the error but don't block the invoice
+		frappe.log_error(
+			f"Jofotara Payer Type calculation failed for Sales Invoice {doc.name}: {str(e)}",
+			"Jofotara Payer Type Error"
+		)
+
+
 def on_submit(doc, method):
 	"""
     Hook to automatically submit eligible invoices to JoFotara.

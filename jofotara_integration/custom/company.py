@@ -61,20 +61,20 @@ def add_custom_fields():
                 "default": 0,
                 "description": "Enable auto submission to JoFotara"
             },
-             {
-                "fieldname": "company_registration_type",
-                "label": "Company Registration Type",
-                "fieldtype": "Select",
+            {
+                "fieldname": "is_jordan_sales_tax_registered",
+                "label": "Registered for Jordanian Sales Tax",
+                "fieldtype": "Check",
                 "insert_after": "jofotara_auto_submit",
                 "depends_on": "jofotara_is_active",
-                "options": "Unregistered in the sales tax\nRegistered in the sales tax\nRegistered in the special sales tax",
-                "default": "Unregistered in the sales tax"
+                "default": 0,
+                "description": "if the company is registered for General Sales Tax with Jordan's Income and Sales Tax Department (ISTD). This setting determines the base category for Jofotara e-invoices."
             },
             {
                 "fieldname": "current_icv_counter",
                 "label": "Current ICV Counter",
                 "fieldtype": "Int",
-                "insert_after": "company_registration_type",
+                "insert_after": "is_jordan_sales_tax_registered",
                 "depends_on": "jofotara_is_active",
                 "read_only": 1,
                 "default": 0,
