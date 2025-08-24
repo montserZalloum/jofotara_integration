@@ -193,3 +193,49 @@ def is_special_tax_template(tax_template: str) -> Dict[str, Any]:
             "JoFotara Validation Error"
         )
         return {'is_special': False}
+
+
+@frappe.whitelist()
+def check_invoice_compliance_status(sales_invoice_name: str) -> Dict[str, Any]:
+    """
+    Check if a sales invoice has compliance violations that would prevent JoFotara submission.
+    
+    Args:
+        sales_invoice_name: Name/ID of the Sales Invoice
+        
+    Returns:
+        Dict containing compliance status and details
+    """
+    try:
+        if not frappe.db.exists("Sales Invoice", sales_invoice_name):
+            return {
+                'is_compliant': False,
+                'error_message': 'Sales Invoice not found'
+            }
+        
+        sales_invoice = frappe.get_doc("Sales Invoice", sales_invoice_name)
+        
+        # Check company item compliance
+        validation_result = validation_service.validate_company_item_compliance(sales_invoice.as_dict())
+        
+        if not validation_result['success']:
+            return {
+                'is_compliant': False,
+                'error_message': validation_result['error_message'],
+                'special_items': validation_result.get('special_items', [])
+            }
+        
+        return {
+            'is_compliant': True,
+            'message': 'Invoice is compliant for JoFotara submission'
+        }
+        
+    except Exception as e:
+        frappe.log_error(
+            f"Error checking invoice compliance status for {sales_invoice_name}: {str(e)}",
+            "JoFotara Validation Error"
+        )
+        return {
+            'is_compliant': False,
+            'error_message': f'Error checking compliance: {str(e)}'
+        }

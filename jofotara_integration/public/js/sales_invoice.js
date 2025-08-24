@@ -3,6 +3,9 @@ frappe.ui.form.on('Sales Invoice', {
 		// Clean up any stuck progress indicators from previous sessions
 		hide_submission_progress(frm);
 		
+		// Clean up compliance warnings from previous sessions
+		remove_compliance_warning(frm);
+		
 		// Add JoFotara configuration status indicator (AC: 6)
 		add_company_configuration_status(frm);
 		
@@ -68,12 +71,8 @@ function add_jofotara_submission_button(frm) {
 	
 	// Only show button if not already accepted
 	if (einvoice_status !== 'Accepted') {
-		frm.add_custom_button(__('Submit to JoFotara'), function() {
-			submit_to_jofotara(frm);
-		}, __('Actions'));
-		
-		// Style the button
-		frm.custom_buttons[__('Submit to JoFotara')].addClass('btn-primary');
+		// Check compliance status before showing the button
+		check_compliance_and_add_button(frm);
 	}
 	
 	// Add status check button
@@ -90,6 +89,77 @@ function add_jofotara_submission_button(frm) {
 		}, __('Actions'));
 		
 		frm.custom_buttons[__('Retry Submission')].addClass('btn-warning');
+	}
+}
+
+function check_compliance_and_add_button(frm) {
+	// Check compliance status via server call
+	frappe.call({
+		method: 'jofotara_integration.jofotara_integration.services.validation_service.check_invoice_compliance_status',
+		args: {
+			sales_invoice_name: frm.doc.name
+		},
+		callback: function(response) {
+			if (response.message) {
+				const compliance_status = response.message;
+				
+				if (compliance_status.is_compliant) {
+					// Invoice is compliant - add the submit button
+					frm.add_custom_button(__('Submit to JoFotara'), function() {
+						submit_to_jofotara(frm);
+					}, __('Actions'));
+					
+					// Style the button
+					frm.custom_buttons[__('Submit to JoFotara')].addClass('btn-primary');
+				} else {
+					// Invoice has compliance violations - show compliance warning instead
+					add_compliance_warning(frm, compliance_status.error_message);
+				}
+			}
+		},
+		error: function() {
+			// If compliance check fails, don't show the button to be safe
+			console.error('Failed to check invoice compliance status');
+		}
+	});
+}
+
+function add_compliance_warning(frm, error_message) {
+	// Remove existing compliance warning
+	remove_compliance_warning(frm);
+	
+	// Find a good place to insert the compliance warning
+	const target_field = frm.get_field('custom_einvoice_status') || frm.get_field('company');
+	if (!target_field || !target_field.$wrapper) {
+		return;
+	}
+	
+	const compliance_html = `
+		<div id="compliance-warning" style="margin-top: 10px; padding: 15px; background-color: #fff3cd; border-radius: 4px; border-left: 4px solid #ffc107;">
+			<div style="display: flex; align-items: flex-start; gap: 10px;">
+				<i class="fa fa-exclamation-triangle" style="color: #856404; font-size: 18px; margin-top: 2px;"></i>
+				<div style="flex: 1;">
+					<h5 style="margin: 0 0 8px 0; color: #856404;">
+						<i class="fa fa-ban"></i> JoFotara Submission Blocked
+					</h5>
+					<div style="color: #856404; font-size: 13px; line-height: 1.4;">
+						${error_message.replace(/\n/g, '<br>')}
+					</div>
+					<div style="margin-top: 10px; font-size: 12px; color: #856404;">
+						<strong>Note:</strong> This invoice cannot be submitted to JoFotara until the compliance issues are resolved.
+					</div>
+				</div>
+			</div>
+		</div>
+	`;
+	
+	target_field.$wrapper.after(compliance_html);
+}
+
+function remove_compliance_warning(frm) {
+	const existing_warning = document.getElementById('compliance-warning');
+	if (existing_warning) {
+		existing_warning.remove();
 	}
 }
 
@@ -876,10 +946,36 @@ frappe.ui.form.on('Sales Invoice Item', {
 	item_tax_template: function(frm, cdt, cdn) {
 		// Validate when tax template changes
 		validate_unregistered_company_special_items(frm);
+		
+		// Refresh compliance status for submitted invoices
+		if (frm.doc.docstatus === 1) {
+			refresh_compliance_status(frm);
+		}
 	},
 	
 	item_code: function(frm, cdt, cdn) {
 		// Validate when item changes
 		validate_unregistered_company_special_items(frm);
+		
+		// Refresh compliance status for submitted invoices
+		if (frm.doc.docstatus === 1) {
+			refresh_compliance_status(frm);
+		}
 	}
-}); 
+});
+
+function refresh_compliance_status(frm) {
+	// Remove existing compliance warning
+	remove_compliance_warning(frm);
+	
+	// Remove existing submit button
+	if (frm.custom_buttons && frm.custom_buttons[__('Submit to JoFotara')]) {
+		frm.custom_buttons[__('Submit to JoFotara')].remove();
+		delete frm.custom_buttons[__('Submit to JoFotara')];
+	}
+	
+	// Re-check compliance and add appropriate UI elements
+	if (frm.doc.custom_einvoice_status !== 'Accepted') {
+		check_compliance_and_add_button(frm);
+	}
+} 
