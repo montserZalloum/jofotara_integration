@@ -37,6 +37,16 @@ def submit_invoice_to_jofotara(sales_invoice_name):
 		if invoice.get("custom_einvoice_status") == "Accepted":
 			frappe.throw(_("Invoice has already been accepted by JoFotara"))
 		
+		# Check compliance status before manual submission
+		from jofotara_integration.jofotara_integration.services.validation_service import check_invoice_compliance_status
+		
+		compliance_result = check_invoice_compliance_status(sales_invoice_name)
+		if not compliance_result.get('is_compliant', False):
+			frappe.throw(
+				compliance_result.get('error_message', 'Compliance validation failed'),
+				title=_("JoFotara Compliance Violation")
+			)
+		
 		# Validate Company configuration and credentials (AC: 3, 4, 5)
 		company_doc = frappe.get_doc("Company", invoice.company)
 		_validate_company_configuration(company_doc)

@@ -46,6 +46,44 @@ def enqueue_automatic_submission(sales_invoice_name, company_name):
 	if not should_auto_submit_invoice(company_name):
 		return None
 	
+	# Check compliance status before auto-submitting
+	from jofotara_integration.jofotara_integration.services.validation_service import check_invoice_compliance_status
+	
+	compliance_result = check_invoice_compliance_status(sales_invoice_name)
+	if not compliance_result.get('is_compliant', False):
+		# Log the compliance violation for audit purposes
+		frappe.log_error(
+			f"Auto-submission blocked for {sales_invoice_name} due to compliance violation: {compliance_result.get('error_message', 'Unknown error')}",
+			"JoFotara Auto-Submission Compliance Blocked"
+		)
+		
+		# Update invoice status to indicate compliance failure
+		try:
+			frappe.db.set_value("Sales Invoice", sales_invoice_name, {
+				"custom_einvoice_status": "Compliance Failed",
+				"custom_einvoice_error": compliance_result.get('error_message', 'Compliance validation failed')[:500]
+			})
+			frappe.db.commit()
+		except:
+			# If custom_einvoice_error field doesn't exist, use status only
+			frappe.db.set_value("Sales Invoice", sales_invoice_name, {
+				"custom_einvoice_status": "Compliance Failed"
+			})
+			frappe.db.commit()
+		
+		# Publish real-time notification to user
+		frappe.publish_realtime(
+			"msgprint",
+			{
+				"message": compliance_result.get('error_message', 'Compliance validation failed'),
+				"title": "Auto-Submission Blocked - Compliance Violation",
+				"indicator": "red"
+			},
+			user=frappe.session.user
+		)
+		
+		return None
+	
 	return enqueue_invoice_submission(sales_invoice_name, company_name)
 
 

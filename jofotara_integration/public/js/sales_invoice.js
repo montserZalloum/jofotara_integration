@@ -71,8 +71,11 @@ function add_jofotara_submission_button(frm) {
 	
 	// Only show button if not already accepted
 	if (einvoice_status !== 'Accepted') {
-		// Check compliance status before showing the button
-		check_compliance_and_add_button(frm);
+		// First check for existing compliance failed status
+		if (!check_existing_compliance_status(frm)) {
+			// If no existing compliance issue, check compliance status before showing the button
+			check_compliance_and_add_button(frm);
+		}
 	}
 	
 	// Add status check button
@@ -122,6 +125,23 @@ function check_compliance_and_add_button(frm) {
 			console.error('Failed to check invoice compliance status');
 		}
 	});
+}
+
+// Also check for existing compliance failed status
+function check_existing_compliance_status(frm) {
+	const einvoice_status = frm.doc.custom_einvoice_status;
+	
+	// If status is already "Compliance Failed", show warning without checking again
+	if (einvoice_status === 'Compliance Failed' || einvoice_status === 'Validation Failed') {
+		// Get the error message from the custom field if available
+		const error_message = frm.doc.custom_einvoice_error || 
+			'This invoice has compliance violations that prevent JoFotara submission.';
+		
+		add_compliance_warning(frm, error_message);
+		return true; // Indicates compliance issue found
+	}
+	
+	return false; // No existing compliance issue
 }
 
 function add_compliance_warning(frm, error_message) {
@@ -355,7 +375,9 @@ function update_status_indicator(frm, status) {
 		'Pending': 'grey',
 		'Submitted': 'blue', 
 		'Accepted': 'green',
-		'Rejected': 'red'
+		'Rejected': 'red',
+		'Compliance Failed': 'red',
+		'Validation Failed': 'red'
 	};
 	
 	if (status && status_colors[status]) {
