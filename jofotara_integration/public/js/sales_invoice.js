@@ -31,6 +31,12 @@ frappe.ui.form.on('Sales Invoice', {
 		
 		// Control e-invoicing section visibility based on company settings
 		control_einvoicing_section_visibility(frm);
+		
+		// Validate currency for JoFotara integration on form load
+		validate_currency_for_jofotara(frm);
+		
+		// Set up save prevention for unsupported currencies
+		setup_currency_save_prevention(frm);
 	},
 	
 	company: function(frm) {
@@ -38,6 +44,8 @@ frappe.ui.form.on('Sales Invoice', {
 		control_einvoicing_section_visibility(frm);
 		// Refresh buyer validation when company changes
 		add_buyer_validation_status(frm);
+		// Validate currency when company changes (affects JoFotara settings)
+		validate_currency_for_jofotara(frm);
 	},
 	
 	customer: function(frm) {
@@ -63,6 +71,11 @@ frappe.ui.form.on('Sales Invoice', {
 	custom_invoice_qr_code: function(frm) {
 		// Real-time QR code display when field is updated
 		add_qr_code_preview(frm);
+	},
+	
+	currency: function(frm) {
+		// Validate currency for JoFotara integration when currency changes
+		validate_currency_for_jofotara(frm);
 	}
 });
 
@@ -1000,4 +1013,153 @@ function refresh_compliance_status(frm) {
 	if (frm.doc.custom_einvoice_status !== 'Accepted') {
 		check_compliance_and_add_button(frm);
 	}
+}
+
+// Currency validation for JoFotara integration
+function validate_currency_for_jofotara(frm) {
+	const currency = frm.doc.currency;
+	const company = frm.doc.company;
+	
+	if (!currency || !company) {
+		return;
+	}
+	
+	// Check if company has JoFotara enabled
+	frappe.call({
+		method: 'jofotara_integration.services.currency_service.validate_currency',
+		args: {
+			currency_code: currency,
+			company: company
+		},
+		callback: function(r) {
+			if (r.message) {
+				const validation_result = r.message;
+				
+				if (!validation_result.valid) {
+					// Show error dialog for unsupported currency
+					show_currency_validation_dialog(frm, currency, validation_result.message);
+				} else {
+					// Currency is supported - remove any existing validation warnings
+					remove_currency_validation_warning(frm);
+				}
+			}
+		},
+		error: function() {
+			console.error('Failed to validate currency for JoFotara');
+		}
+	});
+}
+
+function show_currency_validation_dialog(frm, currency, message) {
+	// Get supported currencies list
+	frappe.call({
+		method: 'jofotara_integration.services.currency_service.get_supported_currencies',
+		callback: function(r) {
+			if (r.message) {
+				const supported_currencies = r.message;
+				const supported_list = supported_currencies.join(', ');
+				
+				// Create dialog content
+				const dialog_content = `
+					<div style="padding: 20px;">
+						<div style="margin-bottom: 15px;">
+							<i class="fa fa-exclamation-triangle" style="color: #f44336; font-size: 24px; margin-right: 10px;"></i>
+							<strong style="color: #f44336; font-size: 16px;">Currency Not Supported</strong>
+						</div>
+						<div style="margin-bottom: 15px; line-height: 1.5;">
+							<p>The currency <strong>${currency}</strong> is not supported by JoFotara e-invoicing.</p>
+						</div>
+						<div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
+							<strong>Supported Currencies:</strong><br>
+							<span style="font-family: monospace; font-size: 14px;">${supported_list}</span>
+						</div>
+						<div style="color: #666; font-size: 12px;">
+							<i class="fa fa-info-circle"></i>
+							Please select a supported currency to proceed with JoFotara integration.
+						</div>
+					</div>
+				`;
+				
+				// Show dialog
+				const d = new frappe.ui.Dialog({
+					title: __('Currency Validation Error'),
+					primary_action_label: __('OK'),
+					primary_action: function() {
+						d.hide();
+						// Focus on currency field
+						const currency_field = frm.get_field('currency');
+						if (currency_field) {
+							currency_field.$input.focus();
+						}
+					}
+				});
+				
+				d.body.innerHTML = dialog_content;
+				d.show();
+			}
+		}
+	});
+}
+
+
+
+function remove_currency_validation_warning(frm) {
+	// Remove any existing currency validation warnings
+	// This function can be expanded if we add visual indicators
+}
+
+function setup_currency_save_prevention(frm) {
+	// Only set up save prevention once per form instance
+	if (frm.currency_save_prevention_setup) {
+		return;
+	}
+	
+	// Store the original save function
+	const original_save = frm.save;
+	
+	// Override the save function to add currency validation
+	frm.save = function() {
+		const currency = frm.doc.currency;
+		const company = frm.doc.company;
+		
+		if (currency && company) {
+			// Check if company has JoFotara enabled
+			frappe.call({
+				method: 'jofotara_integration.services.currency_service.validate_currency',
+				args: {
+					currency_code: currency,
+					company: company
+				},
+				callback: function(r) {
+					if (r.message && !r.message.valid) {
+						// Show error message and prevent save
+						frappe.msgprint({
+							title: __('Currency Not Supported'),
+							message: r.message.message,
+							indicator: 'red'
+						});
+						
+						// Focus on currency field
+						const currency_field = frm.get_field('currency');
+						if (currency_field) {
+							currency_field.$input.focus();
+						}
+					} else {
+						// Currency is valid, proceed with original save
+						original_save.call(frm);
+					}
+				},
+				error: function() {
+					// If validation fails, still allow save (fail-safe)
+					original_save.call(frm);
+				}
+			});
+		} else {
+			// No currency or company, proceed with original save
+			original_save.call(frm);
+		}
+	};
+	
+	// Mark as setup to prevent multiple overrides
+	frm.currency_save_prevention_setup = true;
 } 
