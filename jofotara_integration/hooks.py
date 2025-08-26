@@ -246,58 +246,7 @@ doc_events = {
 # -------------
 # Custom fields for ERPNext doctypes
 
-custom_fields = {
-	"Sales Invoice": [
-		{
-			"fieldname": "custom_einvoice_status",
-			"label": "E-Invoice Status",
-			"fieldtype": "Select",
-			"options": "Pending\nSubmitted\nAccepted\nRejected",
-			"default": "Pending",
-			"read_only": 1,
-			"insert_after": "status",
-			"allow_on_submit": 1,
-			"in_list_view": 1,
-			"in_standard_filter": 1
-		},
-		{
-			"fieldname": "custom_einvoice_uuid",
-			"label": "E-Invoice UUID",
-			"fieldtype": "Data",
-			"read_only": 1,
-			"insert_after": "custom_einvoice_status",
-			"allow_on_submit": 1,
-			"in_list_view": 0
-		},
-		{
-			"fieldname": "custom_einvoice_qr_code",
-			"label": "E-Invoice QR Code",
-			"fieldtype": "Long Text",
-			"read_only": 1,
-			"insert_after": "e_invoice_uuid",
-			"allow_on_submit": 1,
-			"in_list_view": 0
-		},
-		{
-			"fieldname": "custom_invoice_qr_code",
-			"label": "E-Invoice QR Code Image",
-			"fieldtype": "Image",
-			"read_only": 1,
-			"insert_after": "custom_einvoice_qr_code",
-			"allow_on_submit": 1,
-			"in_list_view": 0
-		},
-		{
-			"fieldname": "icv_counter",
-			"label": "ICV Counter",
-			"fieldtype": "Int",
-			"read_only": 1,
-			"insert_after": "custom_invoice_qr_code",
-			"allow_on_submit": 1,
-			"in_list_view": 0
-		}
-	]
-}
+
 
 after_migrate = [
     "jofotara_integration.custom.company.add_custom_fields",

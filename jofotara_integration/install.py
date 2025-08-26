@@ -108,11 +108,11 @@ def get_print_format_html():
 				<p>{{ doc.customer_address }}</p>
 			</div>
 			<div class="col-md-6">
-				{% if doc.custom_einvoice_qr_code %}
+				{% if doc.custom_invoice_qr_code %}
 				<div class="qr-code-section">
 					<h4>E-Invoice QR Code</h4>
 					<div class="qr-code-container" style="text-align: center; padding: 10px; border: 1px solid #ddd;">
-						<img id="qr-code-image" src="data:image/png;base64,{{ doc.custom_einvoice_qr_code }}" 
+						<img id="qr-code-image" src="data:image/png;base64,{{ doc.custom_invoice_qr_code }}" 
 							 alt="E-Invoice QR Code" style="max-width: 150px; max-height: 150px;">
 						<p style="font-size: 11px; margin-top: 5px;">Scan for E-Invoice Verification</p>
 					</div>
@@ -150,7 +150,7 @@ def get_print_format_html():
 	<div class="invoice-totals">
 		<div class="row">
 			<div class="col-md-6">
-				{% if doc.custom_einvoice_qr_code %}
+				{% if doc.custom_invoice_qr_code %}
 				<div class="e-invoice-info">
 					<p><strong>E-Invoice Status:</strong> {{ doc.custom_einvoice_status or "Not Submitted" }}</p>
 					{% if doc.custom_einvoice_status == "Accepted" %}
@@ -185,7 +185,7 @@ def get_print_format_html():
 			<div class="col-md-12">
 				<hr>
 				<p style="text-align: center; font-size: 12px;">
-					{% if doc.custom_einvoice_qr_code %}
+					{% if doc.custom_invoice_qr_code %}
 					This invoice has been electronically submitted to tax authorities and contains an official QR code for verification.
 					{% else %}
 					This invoice has not been electronically submitted to tax authorities.

@@ -130,8 +130,8 @@ def before_save(doc, method):
 		if hasattr(doc, 'custom_einvoice_status'):
 			doc.custom_einvoice_status = "Pending"
 		
-		if hasattr(doc, 'custom_einvoice_qr_code'):
-			doc.custom_einvoice_qr_code = ""
+		if hasattr(doc, 'custom_invoice_qr_code'):
+			doc.custom_invoice_qr_code = ""
 		
 		## if hasattr(doc, 'custom_einvoice_uuid'):
 		## 	doc.custom_einvoice_uuid = ""
