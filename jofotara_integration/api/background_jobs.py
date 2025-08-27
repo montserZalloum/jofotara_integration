@@ -210,8 +210,8 @@ def process_invoice_submission(sales_invoice, company):
 		client = JoFotaraClient()
 		
 		# Ensure ICV is assigned (reserve if missing) and get value
-		icv_counter = invoice_doc.get("custom_icv_counter") or 0
-		if not icv_counter or icv_counter <= 0:
+		icv_counter = invoice_doc.get("custom_icv_counter") or ""
+		if not icv_counter:
 			icv_counter = icv_counter_manager.reserve_icv_for_invoice(company, sales_invoice)
 			# Reload invoice to reflect updated field
 			invoice_doc.reload()

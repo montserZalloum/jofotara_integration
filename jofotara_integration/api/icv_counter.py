@@ -13,6 +13,61 @@ class ICVCounterManager:
     # Thread lock for atomic operations
     _lock = threading.Lock()
     
+    def get_company_abbreviation(self, company_name):
+        """
+        Get company abbreviation from the Company doctype
+        
+        Args:
+            company_name (str): Company name
+            
+        Returns:
+            str: Company abbreviation or empty string if not found
+        """
+        try:
+            abbr = frappe.db.get_value("Company", company_name, "abbr")
+            return abbr or ""
+        except:
+            return ""
+    
+    def format_icv_with_abbreviation(self, company_name, counter_value):
+        """
+        Format ICV with company abbreviation prefix
+        
+        Args:
+            company_name (str): Company name
+            counter_value (int): Counter value
+            
+        Returns:
+            str: Formatted ICV (e.g., "MZ-1", "MZ-2")
+        """
+        abbr = self.get_company_abbreviation(company_name)
+        if abbr:
+            return f"{abbr}-{counter_value}"
+        else:
+            return str(counter_value)
+    
+    def extract_counter_from_icv(self, icv_value):
+        """
+        Extract numeric counter from formatted ICV
+        
+        Args:
+            icv_value (str): Formatted ICV (e.g., "MZ-1", "MZ-2")
+            
+        Returns:
+            int: Numeric counter value
+        """
+        if not icv_value:
+            return 0
+        
+        try:
+            # Handle both formatted (MZ-1) and plain numeric values
+            if "-" in str(icv_value):
+                return int(str(icv_value).split("-")[-1])
+            else:
+                return int(icv_value)
+        except (ValueError, AttributeError):
+            return 0
+
     def get_next_icv(self, company_name):
         """
         Atomically get next ICV and increment counter for a company
@@ -21,7 +76,7 @@ class ICVCounterManager:
             company_name (str): Company name
             
         Returns:
-            int: Next sequential ICV value
+            str: Next sequential ICV value with company abbreviation
             
         Raises:
             Exception: If company not found or database error occurs
@@ -44,16 +99,19 @@ class ICVCounterManager:
                 """, (company_name,))
                 
                 # Get the updated counter value
-                next_icv = frappe.db.get_value("Company", company_name, "current_icv_counter")
+                next_counter = frappe.db.get_value("Company", company_name, "current_icv_counter")
                 
-                if not next_icv:
+                if next_counter is None:
                     frappe.throw(_("Failed to retrieve updated ICV counter"))
+                
+                # Format with company abbreviation
+                next_icv = self.format_icv_with_abbreviation(company_name, int(next_counter))
                 
                 # Log ICV assignment in development mode only
                 if frappe.conf.get('developer_mode'):
                     frappe.msgprint(f"ICV Counter: Company {company_name} - assigned ICV {next_icv}")
                 
-                return int(next_icv)
+                return next_icv
                 
             except frappe.DoesNotExistError:
                 frappe.throw(_("Company {0} not found").format(company_name))
@@ -115,6 +173,12 @@ class ICVCounterManager:
         """
         if not company_name:
             return 0
+        
+        try:
+            company_doc = frappe.get_doc("Company", company_name)
+            return int(company_doc.get("current_icv_counter") or 0)
+        except:
+            return 0
 
     def get_assigned_icv(self, sales_invoice_name):
         """
@@ -124,20 +188,20 @@ class ICVCounterManager:
             sales_invoice_name (str): Sales Invoice name/ID
         
         Returns:
-            int: Assigned ICV value or 0 if not assigned
+            str: Assigned ICV value or empty string if not assigned
         """
         if not sales_invoice_name:
-            return 0
+            return ""
         try:
             icv = frappe.db.get_value("Sales Invoice", sales_invoice_name, "custom_icv_counter")
-            return int(icv or 0)
+            return icv or ""
         except Exception:
-            return 0
+            return ""
 
     def reserve_icv_for_invoice(self, company_name, sales_invoice_name):
         """
         Atomically reserve ICV for a Sales Invoice on first submission attempt.
-        If the invoice already has an assigned ICV (> 0), it is returned unchanged.
+        If the invoice already has an assigned ICV, it is returned unchanged.
         
         This method increments the Company's current_icv_counter and writes the
         reserved value to Sales Invoice.custom_icv_counter in the same locked
@@ -148,7 +212,7 @@ class ICVCounterManager:
             sales_invoice_name (str): Sales Invoice name/ID
         
         Returns:
-            int: The assigned ICV value for this invoice
+            str: The assigned ICV value for this invoice
         """
         if not company_name:
             frappe.throw(_("Company name is required"))
@@ -158,7 +222,7 @@ class ICVCounterManager:
         with self._atomic_counter_operation():
             # Re-check if already assigned to ensure idempotency
             already_assigned = self.get_assigned_icv(sales_invoice_name)
-            if already_assigned and already_assigned > 0:
+            if already_assigned:
                 return already_assigned
 
             # Validate existence
@@ -177,16 +241,19 @@ class ICVCounterManager:
                 (company_name,)
             )
 
-            next_icv = frappe.db.get_value("Company", company_name, "current_icv_counter")
-            if not next_icv:
+            next_counter = frappe.db.get_value("Company", company_name, "current_icv_counter")
+            if next_counter is None:
                 frappe.throw(_("Failed to retrieve updated ICV counter"))
+
+            # Format with company abbreviation
+            next_icv = self.format_icv_with_abbreviation(company_name, int(next_counter))
 
             # Persist ICV to invoice
             frappe.db.set_value(
                 "Sales Invoice",
                 sales_invoice_name,
                 "custom_icv_counter",
-                int(next_icv),
+                next_icv,
                 update_modified=False,
             )
 
@@ -194,13 +261,7 @@ class ICVCounterManager:
             # if frappe.conf.get('developer_mode'):
             #     frappe.msgprint(f"ICV Reservation: Invoice {sales_invoice_name} assigned ICV {next_icv}")
             # # For production logging, we'll skip detailed logs to avoid permission issues
-            return int(next_icv)
-        
-        try:
-            company_doc = frappe.get_doc("Company", company_name)
-            return int(company_doc.get("current_icv_counter") or 0)
-        except:
-            return 0
+            return next_icv
     
     def validate_counter_integrity(self, company_name):
         """
@@ -218,25 +279,27 @@ class ICVCounterManager:
             
             # Get highest ICV value from submitted invoices
             max_icv_in_invoices = frappe.db.sql("""
-                SELECT COALESCE(MAX(custom_icv_counter), 0) as max_icv
+                SELECT COALESCE(MAX(custom_icv_counter), '') as max_icv
                 FROM `tabSales Invoice`
                 WHERE company = %s 
                 AND docstatus = 1 
                 AND custom_icv_counter IS NOT NULL
-                AND custom_icv_counter > 0
+                AND custom_icv_counter != ''
             """, [company_name], as_dict=True)
             
-            max_icv = max_icv_in_invoices[0].get("max_icv", 0) if max_icv_in_invoices else 0
+            max_icv_str = max_icv_in_invoices[0].get("max_icv", "") if max_icv_in_invoices else ""
+            max_icv_counter = self.extract_counter_from_icv(max_icv_str)
             
             # Validation: current_counter should be >= max_icv in invoices
-            is_valid = current_counter >= max_icv
+            is_valid = current_counter >= max_icv_counter
             
             result = {
                 "company": company_name,
                 "current_counter": current_counter,
-                "max_icv_in_invoices": max_icv,
+                "max_icv_in_invoices": max_icv_counter,
+                "max_icv_string": max_icv_str,
                 "is_valid": is_valid,
-                "discrepancy": current_counter - max_icv if not is_valid else 0
+                "discrepancy": current_counter - max_icv_counter if not is_valid else 0
             }
             
             if not is_valid:
@@ -256,6 +319,7 @@ class ICVCounterManager:
                 "company": company_name,
                 "current_counter": 0,
                 "max_icv_in_invoices": 0,
+                "max_icv_string": "",
                 "is_valid": False,
                 "error": str(e)
             }
@@ -309,7 +373,7 @@ def get_next_icv_for_company(company_name):
 @frappe.whitelist()
 def get_assigned_icv(sales_invoice_name):
     """
-    API endpoint to get assigned ICV for a Sales Invoice (0 if none)
+    API endpoint to get assigned ICV for a Sales Invoice (empty string if none)
     """
     try:
         if not frappe.has_permission("Sales Invoice", "read"):

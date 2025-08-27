@@ -73,7 +73,7 @@ def add_custom_fields():
             {
                 "fieldname": "current_icv_counter",
                 "label": "Current ICV Counter",
-                "fieldtype": "Int",
+                "fieldtype": "Data",
                 "insert_after": "is_jordan_sales_tax_registered",
                 "depends_on": "jofotara_is_active",
                 "read_only": 1,

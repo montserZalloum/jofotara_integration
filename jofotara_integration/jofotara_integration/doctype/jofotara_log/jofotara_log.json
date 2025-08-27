@@ -7,7 +7,7 @@
  "field_order": [
   "sales_invoice",
   "status",
-    "icv_value",
+  "icv_value",
   "request_payload",
   "response_payload"
  ],
@@ -16,34 +16,39 @@
    "fieldname": "sales_invoice",
    "fieldtype": "Link",
    "label": "Sales Invoice",
-   "options": "Sales Invoice"
+   "options": "Sales Invoice",
+   "read_only": 1
   },
   {
    "fieldname": "status",
    "fieldtype": "Select",
    "label": "Status",
-   "options": "Success\nError"
+   "options": "Success\nError",
+   "read_only": 1
   },
   {
-      "fieldname": "icv_value",
-      "fieldtype": "Int",
-      "label": "ICV Value"
-    },
-    {
+   "fieldname": "icv_value",
+   "fieldtype": "Data",
+   "label": "ICV Value",
+   "read_only": 1
+  },
+  {
    "fieldname": "request_payload",
    "fieldtype": "Code",
-   "label": "Request Payload"
+   "label": "Request Payload",
+   "read_only": 1
   },
   {
    "fieldname": "response_payload",
    "fieldtype": "Code",
-   "label": "Response Payload"
+   "label": "Response Payload",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-04 15:49:27.544262",
+ "modified": "2025-08-27 11:41:37.266975",
  "modified_by": "Administrator",
  "module": "Jofotara Integration",
  "name": "JoFotara Log",

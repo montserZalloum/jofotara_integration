@@ -49,7 +49,7 @@ def add_custom_fields():
             {
                 "fieldname": "custom_icv_counter",
                 "label": "JoFotara ICV",
-                "fieldtype": "Int",
+                "fieldtype": "Data",
                 "insert_after": "custom_invoice_qr_code",
                 "read_only": 1,
                 "no_copy": 1,

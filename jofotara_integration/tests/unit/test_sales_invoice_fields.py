@@ -71,12 +71,12 @@ class TestSalesInvoiceFields(unittest.TestCase):
             })
             
             # Test setting ICV value
-            invoice.custom_icv_counter = 123
+            invoice.custom_icv_counter = "TEST-123"
             invoice.insert()
             
             # Retrieve and verify
             saved_invoice = frappe.get_doc("Sales Invoice", invoice.name)
-            self.assertEqual(saved_invoice.custom_icv_counter, 123)
+            self.assertEqual(saved_invoice.custom_icv_counter, "TEST-123")
             
         except Exception as e:
             self.fail(f"Failed to test field value assignment: {str(e)}")
@@ -124,16 +124,16 @@ class TestSalesInvoiceFields(unittest.TestCase):
             
             invoice.insert()
             
-            # Should be 0 or None initially
-            self.assertIn(invoice.custom_icv_counter, [0, None])
+            # Should be empty string or None initially
+            self.assertIn(invoice.custom_icv_counter, ["", None])
             
         except Exception as e:
             self.fail(f"Failed to test field default value: {str(e)}")
         finally:
             self._cleanup_test_invoices()
     
-    def test_field_integer_validation(self):
-        """Test that field accepts integer values"""
+    def test_field_string_validation(self):
+        """Test that field accepts string values with company abbreviation format"""
         test_company = self._get_or_create_test_company()
         
         try:
@@ -149,8 +149,8 @@ class TestSalesInvoiceFields(unittest.TestCase):
                 }]
             })
             
-            # Test various integer values
-            test_values = [1, 100, 999, 1234567]
+            # Test various string values with company abbreviation format
+            test_values = ["TEST-1", "TEST-100", "TEST-999", "TEST-1234567"]
             
             for value in test_values:
                 invoice.custom_icv_counter = value
@@ -163,7 +163,7 @@ class TestSalesInvoiceFields(unittest.TestCase):
                 frappe.delete_doc("Sales Invoice", invoice.name, force=True)
                 
         except Exception as e:
-            self.fail(f"Failed to test integer validation: {str(e)}")
+            self.fail(f"Failed to test string validation: {str(e)}")
         finally:
             self._cleanup_test_invoices()
     

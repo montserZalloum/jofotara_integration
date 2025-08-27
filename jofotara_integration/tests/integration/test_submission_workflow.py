@@ -82,7 +82,7 @@ class TestSubmissionWorkflow(unittest.TestCase):
         invoice = self._create_draft_invoice("WF-INV-001")
         
         # Verify ICV is not assigned before submission
-        self.assertIn(invoice.get("custom_icv_counter"), [None, 0])
+        self.assertIn(invoice.get("custom_icv_counter"), [None, "", 0])
         
         # Submit the invoice
         invoice.submit()
@@ -90,8 +90,8 @@ class TestSubmissionWorkflow(unittest.TestCase):
         # Reload to get updated values
         invoice.reload()
         
-        # Verify ICV was assigned
-        self.assertEqual(invoice.custom_icv_counter, 1)
+        # Verify ICV was assigned with company abbreviation format
+        self.assertEqual(invoice.custom_icv_counter, "TEST-1")
         
         # Verify company counter was updated
         current_counter = frappe.db.get_value("Company", "Test Workflow Company", "current_icv_counter")
@@ -110,7 +110,7 @@ class TestSubmissionWorkflow(unittest.TestCase):
             invoice.reload()
             
             invoices.append(invoice)
-            expected_icvs.append(i + 1)
+            expected_icvs.append(f"TEST-{i + 1}")
         
         # Verify sequential ICV assignment
         actual_icvs = [inv.custom_icv_counter for inv in invoices]
@@ -133,7 +133,7 @@ class TestSubmissionWorkflow(unittest.TestCase):
             invoice.reload()
             
             # Verify ICV was not assigned
-            self.assertIn(invoice.get("custom_icv_counter"), [None, 0])
+            self.assertIn(invoice.get("custom_icv_counter"), [None, "", 0])
             
             # Verify counter was not updated
             counter = frappe.db.get_value("Company", "Test Workflow Company", "current_icv_counter")
@@ -152,7 +152,7 @@ class TestSubmissionWorkflow(unittest.TestCase):
         invoice.reload()
         
         original_icv = invoice.custom_icv_counter
-        self.assertEqual(original_icv, 1)
+        self.assertEqual(original_icv, "TEST-1")
         
         # Cancel and resubmit (simulate resubmission scenario)
         invoice.cancel()
@@ -169,7 +169,7 @@ class TestSubmissionWorkflow(unittest.TestCase):
         amended_invoice.reload()
         
         # Verify new invoice gets next ICV (not reassigned)
-        self.assertEqual(amended_invoice.custom_icv_counter, 2)
+        self.assertEqual(amended_invoice.custom_icv_counter, "TEST-2")
     
     def test_submission_failure_handling(self):
         """Test that submission failures don't corrupt counter state"""
@@ -237,9 +237,9 @@ class TestSubmissionWorkflow(unittest.TestCase):
             invoice1.reload()
             invoice2.reload()
             
-            # Both should get ICV = 1 (isolated counters)
-            self.assertEqual(invoice1.custom_icv_counter, 1)
-            self.assertEqual(invoice2.custom_icv_counter, 1)
+            # Both should get ICV = 1 (isolated counters) with company abbreviation
+            self.assertEqual(invoice1.custom_icv_counter, "TEST-1")
+            self.assertEqual(invoice2.custom_icv_counter, "TEST2-1")
             
             # Verify both company counters are at 1
             counter1 = frappe.db.get_value("Company", "Test Workflow Company", "current_icv_counter")
@@ -277,6 +277,7 @@ class TestSubmissionWorkflow(unittest.TestCase):
         self.assertTrue(result["is_valid"])
         self.assertEqual(result["current_counter"], 3)
         self.assertEqual(result["max_icv_in_invoices"], 3)
+        self.assertEqual(result["max_icv_string"], "TEST-3")
         self.assertEqual(result["discrepancy"], 0)
     
     def _create_draft_invoice(self, invoice_name, company=None):

@@ -45,11 +45,11 @@ class TestICVCounterManager(unittest.TestCase):
         frappe.db.commit()
     
     def test_get_next_icv_first_call(self):
-        """Test getting first ICV returns 1"""
+        """Test getting first ICV returns formatted string with company abbreviation"""
         counter_manager = ICVCounterManager()
         next_icv = counter_manager.get_next_icv("Test ICV Company")
         
-        self.assertEqual(next_icv, 1)
+        self.assertEqual(next_icv, "TIC-1")
         
         # Verify counter was updated in database
         current_counter = frappe.db.get_value("Company", "Test ICV Company", "current_icv_counter")
@@ -64,9 +64,9 @@ class TestICVCounterManager(unittest.TestCase):
         icv2 = counter_manager.get_next_icv("Test ICV Company")
         icv3 = counter_manager.get_next_icv("Test ICV Company")
         
-        self.assertEqual(icv1, 1)
-        self.assertEqual(icv2, 2)
-        self.assertEqual(icv3, 3)
+        self.assertEqual(icv1, "TIC-1")
+        self.assertEqual(icv2, "TIC-2")
+        self.assertEqual(icv3, "TIC-3")
         
         # Verify final counter state
         current_counter = frappe.db.get_value("Company", "Test ICV Company", "current_icv_counter")
@@ -107,7 +107,7 @@ class TestICVCounterManager(unittest.TestCase):
         
         # Next ICV should be 1
         next_icv = counter_manager.get_next_icv("Test ICV Company")
-        self.assertEqual(next_icv, 1)
+        self.assertEqual(next_icv, "TIC-1")
     
     def test_get_current_counter(self):
         """Test reading current counter value"""
@@ -135,8 +135,8 @@ class TestICVCounterManager(unittest.TestCase):
         counter_manager.get_next_icv("Test ICV Company")
         
         # Create mock sales invoices with matching ICVs
-        self._create_test_sales_invoice("INV-001", 1)
-        self._create_test_sales_invoice("INV-002", 2)
+        self._create_test_sales_invoice("INV-001", "TIC-1")
+        self._create_test_sales_invoice("INV-002", "TIC-2")
         
         try:
             # Validate integrity
@@ -145,6 +145,7 @@ class TestICVCounterManager(unittest.TestCase):
             self.assertTrue(result["is_valid"])
             self.assertEqual(result["current_counter"], 2)
             self.assertEqual(result["max_icv_in_invoices"], 2)
+            self.assertEqual(result["max_icv_string"], "TIC-2")
             self.assertEqual(result["discrepancy"], 0)
         finally:
             # Clean up test invoices
@@ -158,7 +159,7 @@ class TestICVCounterManager(unittest.TestCase):
         frappe.db.set_value("Company", "Test ICV Company", "current_icv_counter", 1)
         
         # Create mock sales invoice with higher ICV
-        self._create_test_sales_invoice("INV-003", 3)
+        self._create_test_sales_invoice("INV-003", "TIC-3")
         
         try:
             # Validate integrity
@@ -167,6 +168,7 @@ class TestICVCounterManager(unittest.TestCase):
             self.assertFalse(result["is_valid"])
             self.assertEqual(result["current_counter"], 1)
             self.assertEqual(result["max_icv_in_invoices"], 3)
+            self.assertEqual(result["max_icv_string"], "TIC-3")
         finally:
             # Clean up test invoices
             self._cleanup_test_sales_invoices()
@@ -175,11 +177,11 @@ class TestICVCounterManager(unittest.TestCase):
         """Test that global instance works correctly"""
         # Test using global instance
         next_icv = icv_counter_manager.get_next_icv("Test ICV Company")
-        self.assertEqual(next_icv, 1)
+        self.assertEqual(next_icv, "TIC-1")
         
         # Verify it maintains state
         next_icv = icv_counter_manager.get_next_icv("Test ICV Company")
-        self.assertEqual(next_icv, 2)
+        self.assertEqual(next_icv, "TIC-2")
     
     def _create_test_sales_invoice(self, invoice_name, icv_value):
         """Helper to create test sales invoice"""
