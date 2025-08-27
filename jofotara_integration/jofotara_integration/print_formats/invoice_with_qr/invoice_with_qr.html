@@ -2,13 +2,17 @@
 	<div class="invoice-header">
 		<div class="row">
 			<div class="col-md-6">
+				{% if doc.company_logo %}
 				<img src="{{ doc.company_logo }}" class="company-logo" style="max-height: 80px;">
+				{% endif %}
 				<h3>{{ doc.company }}</h3>
+				{% if doc.company_address %}
 				<p>{{ doc.company_address }}</p>
+				{% endif %}
 			</div>
 			<div class="col-md-6 text-right">
 				<h2>INVOICE</h2>
-				<p><strong>Invoice #:</strong> {{ doc.name }}</p>
+				<p><strong>Invoice #:</strong> {{ doc.custom_icv_counter }}</p>
 				<p><strong>Date:</strong> {{ doc.posting_date }}</p>
 				<p><strong>Due Date:</strong> {{ doc.due_date }}</p>
 			</div>
@@ -20,7 +24,9 @@
 			<div class="col-md-6">
 				<h4>Bill To:</h4>
 				<p><strong>{{ doc.customer_name }}</strong></p>
+				{% if doc.customer_address %}
 				<p>{{ doc.customer_address }}</p>
+				{% endif %}
 			</div>
 			<div class="col-md-6">
 				{% if doc.custom_invoice_qr_code %}
